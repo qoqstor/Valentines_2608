@@ -6,9 +6,18 @@
     "indexes": "firestore.indexes.json"
   },
   "hosting": {
-    "public": "public",
+    "public": ".",
     "ignore": [
       "firebase.json",
+      ".firebaserc",
+      "database.rules",
+      "firestore.rules",
+      "firestore.indexes",
+      "skills-lock.json",
+      ".agents/**",
+      ".firebase/**",
+      "extensions/**",
+      ".gitignore",
       "**/.*",
       "**/node_modules/**"
     ]
