@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>💌 匿名情人節告白信牆</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body {
+    height:100%; overflow:hidden;
+    font-family: "PingFang TC","Microsoft JhengHei",sans-serif;
+    background: radial-gradient(ellipse at 50% 20%, #2b1055 0%, #10042e 55%, #05010f 100%);
+  }
+  body { position:relative; }
+  .stars { position:absolute; inset:0; overflow:hidden; }
+  .star { position:absolute; width:2px; height:2px; background:#fff; border-radius:50%; animation: twinkle 3s infinite ease-in-out; opacity:0.6; }
+  @keyframes twinkle { 0%,100%{opacity:0.2;} 50%{opacity:1;} }
+  .heart { position:absolute; bottom:-40px; font-size:20px; opacity:0.8; animation: floatUp linear infinite; filter: drop-shadow(0 0 4px rgba(255,120,170,0.8)); }
+  @keyframes floatUp { 0%{transform:translateY(0) translateX(0) rotate(0deg);opacity:0;} 10%{opacity:0.9;} 100%{transform:translateY(-110vh) translateX(20px) rotate(25deg);opacity:0;} }
+  .scene { position:relative; height:100%; display:flex; align-items:center; justify-content:center; flex-direction:column; z-index:2; padding-bottom:50px; }
+  .title { position:fixed; top:18px; left:0; right:0; text-align:center; color:#ffdce9; letter-spacing:4px; font-size:15px; z-index:3; opacity:0.85;}
+  .envelope-wrap { text-align:center; cursor:pointer; user-select:none; }
+  .envelope { position:relative; width:230px; height:150px; margin:0 auto; filter: drop-shadow(0 10px 25px rgba(255,70,130,0.35)); transition: transform 0.4s; }
+  .envelope-wrap:hover .envelope { transform: translateY(-6px) scale(1.02); }
+  .env-back { position:absolute; inset:0; border-radius:10px; background: linear-gradient(145deg, #ffd9e6, #ffb6c9); box-shadow: inset 0 0 0 2px rgba(255,255,255,0.4); }
+  .env-flap { position:absolute; top:0; left:0; width:0; height:0; border-left:115px solid transparent; border-right:115px solid transparent; border-top:75px solid #ff8fab; transform-origin: top center; }
+  .env-heart-seal { position:absolute; top:52px; left:50%; transform:translateX(-50%); font-size:24px; z-index:4; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.25)); }
+  .hint { margin-top:20px; color:#ffdce9; font-size:14px; letter-spacing:2px; animation: pulse 1.8s infinite ease-in-out; }
+  @keyframes pulse { 0%,100%{opacity:0.6;} 50%{opacity:1;} }
+  .count-tag { margin-top:8px; color:#c9a6c2; font-size:12px; }
+  .mini-envelope { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:120px; height:80px; z-index:20; pointer-events:none; opacity:0; transition: opacity 0.3s; }
+  .mini-envelope.active { opacity:1; }
+  .mini-env-back { position:absolute; inset:0; border-radius:8px; background: linear-gradient(145deg,#ffd9e6,#ffb6c9); }
+  .mini-env-flap { position:absolute; top:0; left:0; width:0; height:0; border-left:60px solid transparent; border-right:60px solid transparent; border-top:40px solid #ff8fab; transform-origin: top center; transition: transform 0.7s cubic-bezier(.6,-0.28,.74,.05); }
+  .mini-env-flap.open { transform: rotateX(180deg); }
+  .letter-paper {
+    position:fixed; top:50%; left:50%; transform: translate(-50%,-42%) scale(0.9); width:min(440px, 88vw); max-height:80vh; overflow-y:auto;
+    background: linear-gradient(180deg,#fffdf7,#fff6ea); border-radius:14px; padding:34px 28px 30px;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.5) inset;
+    opacity:0; pointer-events:none; transition: opacity 0.5s ease, transform 0.5s ease; z-index:15;
+  }
+  .letter-paper.show { opacity:1; transform: translate(-50%,-50%) scale(1); pointer-events:auto; }
+  .letter-paper .tag { display:inline-block; font-size:11px; padding:3px 10px; border-radius:10px; margin-bottom:10px; }
+  .tag.user { background:#ffe1ec; color:#e8608a; }
+  .tag.system { background:#eee; color:#888; }
+  .tag.voice { background:#ece1ff; color:#8a63e8; }
+  .recipient-line { font-size:12.5px; color:#b98a63; margin-bottom:12px; }
+  .paper-content { color:#5a4634; font-size:15.5px; line-height:1.85; white-space:pre-wrap; min-height:80px; }
+  .cursor { display:inline-block; color:#e8608a; animation: blink 0.8s infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  .close-btn { position:absolute; top:10px; right:14px; background:none; border:none; font-size:18px; color:#c98; cursor:pointer; }
+  .audio-player { margin-top:14px; display:flex; align-items:center; gap:10px; background:#f6efe4; padding:10px 12px; border-radius:10px; }
+  .audio-player audio { flex:1; height:32px; }
+  .anon-heading { font-size:17px; color:#8a63e8; margin-bottom:10px; }
+  .guess-box { margin-top:22px; border-top:1px dashed #e5d3c0; padding-top:16px; opacity:0; transition: opacity 0.6s ease; }
+  .guess-box.show { opacity:1; }
+  .guess-box h4 { color:#e8608a; font-size:14px; margin-bottom:10px; }
+  .guess-status { font-size:12px; color:#a98; margin-bottom:10px; }
+  .guess-row { display:flex; gap:8px; margin-bottom:10px; }
+  .guess-row input { flex:1; padding:8px 10px; border-radius:8px; border:1px solid #eddcc9; font-size:14px; }
+  .guess-row input:disabled { background:#f2ede4; color:#b9a58f; }
+  .guess-row button { background:#ff8fab; border:none; color:#fff; padding:8px 14px; border-radius:8px; font-size:13px; cursor:pointer; }
+  .guess-row button:disabled { background:#e6c9d5; cursor:default; }
+  .guess-list { display:flex; flex-direction:column; gap:6px; }
+  .guess-item { display:flex; align-items:center; gap:8px; font-size:13px; color:#7a6650; }
+  .guess-bar-wrap { flex:1; background:#f3e6d8; border-radius:6px; overflow:hidden; height:14px; }
+  .guess-bar { height:100%; background:linear-gradient(90deg,#ffb6c9,#ff8fab); }
+  .modal-mask { position:fixed; inset:0; background:rgba(10,3,25,0.6); z-index:25; display:none; align-items:center; justify-content:center; }
+  .modal-mask.show { display:flex; }
+  .modal-box { width:min(400px,88vw); background:#fff8ef; border-radius:14px; padding:26px; box-shadow:0 20px 50px rgba(0,0,0,0.4); }
+  .modal-box h3 { color:#e8608a; margin-bottom:14px; font-size:16px; }
+  .modal-box label { font-size:12px; color:#a98; display:block; margin-bottom:4px; }
+  .modal-box input[type="text"] { width:100%; padding:9px 10px; border-radius:8px; border:1px solid #eddcc9; font-size:14px; margin-bottom:14px; font-family:inherit; }
+  .modal-box textarea { width:100%; height:120px; border-radius:8px; border:1px solid #eddcc9; padding:10px; font-size:14px; resize:none; font-family:inherit; }
+  .modal-box .count { text-align:right; font-size:11px; color:#bbb; margin-top:4px; }
+  .modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:14px; }
+  .modal-actions button { border:none; padding:8px 16px; border-radius:8px; font-size:13px; cursor:pointer; }
+  .btn-cancel { background:#eee; color:#777; }
+  .btn-submit { background:#ff8fab; color:#fff; }
+  .btn-secondary { background:#ece1ff; color:#8a63e8; }
+  .mode-choice { display:flex; gap:12px; margin-bottom:4px; }
+  .mode-choice button { flex:1; padding:16px 10px; border-radius:12px; border:1px solid #eddcc9; background:#fff; font-size:14px; cursor:pointer; color:#7a6650; }
+  .mode-choice button:hover { background:#fff0e6; }
+  .record-area { text-align:center; padding:6px 0; }
+  .record-indicator { width:80px; height:80px; border-radius:50%; margin:10px auto; background:radial-gradient(circle,#ff9dc0,#ff6b9d); display:flex; align-items:center; justify-content:center; font-size:30px; color:#fff; }
+  .record-indicator.recording { animation: recPulse 1s infinite; }
+  @keyframes recPulse { 0%,100%{transform:scale(1); box-shadow:0 0 0 0 rgba(255,107,157,0.5);} 50%{transform:scale(1.06); box-shadow:0 0 0 14px rgba(255,107,157,0);} }
+  .record-time { font-size:13px; color:#a98; margin-top:6px; }
+  .recognized-preview { min-height:40px; margin-top:12px; font-size:13px; color:#7a6650; background:#f6efe4; border-radius:8px; padding:10px; text-align:left; }
+  .record-hint { font-size:11px; color:#bbb; margin-top:8px; }
+  .toast { position:fixed; bottom:60px; left:50%; transform:translateX(-50%); background:rgba(255,255,255,0.95); color:#e8608a; padding:10px 20px; border-radius:20px; font-size:13px; opacity:0; transition:opacity 0.4s; z-index:30; pointer-events:none; max-width:80vw; text-align:center; }
+  .toast.show { opacity:1; }
+  .marquee-bar { position:fixed; bottom:0; left:0; width:100%; height:36px; background: rgba(20,5,40,0.6); overflow:hidden; z-index:6; display:flex; align-items:center; backdrop-filter: blur(2px); }
+  .marquee-track { display:flex; white-space:nowrap; animation: scroll-left 28s linear infinite; }
+  .marquee-track span { font-size:13px; letter-spacing:1px; padding-right:50px; cursor:pointer; }
+  .marquee-track span.user { color:#ff9dc0; }
+  .marquee-track span.system { color:#999; }
+  .marquee-track span.voice-anon { color:#c9a8ff; }
+  @keyframes scroll-left { from{ transform:translateX(0);} to{ transform:translateX(-50%);} }
+  .controls { position:fixed; top:16px; right:16px; z-index:7; display:flex; gap:8px; }
+  .controls button { background: rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.35); color:#fff; border-radius:20px; padding:8px 14px; font-size:13px; cursor:pointer; backdrop-filter: blur(4px); }
+</style>
+</head>
+<body>
+
+<div class="stars" id="stars"></div>
+<div id="heartsBg"></div>
+<div class="title">💌 匿名情人節告白信牆</div>
+
+<div class="scene">
+  <div class="envelope-wrap" id="composeTrigger">
+    <div class="envelope">
+      <div class="env-back"></div>
+      <div class="env-flap"></div>
+      <div class="env-heart-seal">💌</div>
+    </div>
+    <div class="hint">點我,留下你的告白</div>
+    <div class="count-tag" id="countTag">載入中...</div>
+  </div>
+</div>
+
+<div class="mini-envelope" id="miniEnvelope">
+  <div class="mini-env-back"></div>
+  <div class="mini-env-flap" id="miniFlap"></div>
+</div>
+
+<div class="letter-paper" id="letterPaper">
+  <button class="close-btn" id="closeBtn">✕</button>
+  <span class="tag" id="letterTag">使用者投稿</span>
+  <div class="recipient-line" id="recipientLine" style="display:none;"></div>
+  <div id="anonHeading" class="anon-heading" style="display:none;"></div>
+  <div class="paper-content" id="typedText"></div>
+  <div class="audio-player" id="audioPlayer" style="display:none;">
+    <span>🔊</span>
+    <audio id="audioEl" controls></audio>
+  </div>
+  <div class="guess-box" id="guessBox">
+    <h4>💭 猜猜這是誰寫的?</h4>
+    <div class="guess-status" id="guessStatus" style="display:none;"></div>
+    <div class="guess-row">
+      <input type="text" id="guessInput" placeholder="輸入你猜的名字...">
+      <button id="guessSubmit">送出猜測</button>
+    </div>
+    <div class="guess-list" id="guessList"></div>
+  </div>
+</div>
+
+<!-- 選擇投稿方式 -->
+<div class="modal-mask" id="choiceModal">
+  <div class="modal-box">
+    <h3>想用哪種方式告白?</h3>
+    <div class="mode-choice">
+      <button id="chooseText">✍️<br>文字投稿</button>
+      <button id="chooseVoice">🎤<br>語音告白</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="choiceCancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 文字投稿 -->
+<div class="modal-mask" id="modalMask">
+  <div class="modal-box">
+    <h3>寫下你的匿名告白 💗</h3>
+    <label>這封信是要給誰的?(選填)</label>
+    <input type="text" id="recipientInputText" placeholder="例如:小明 / 三班的她">
+    <label>告白內容</label>
+    <textarea id="letterInput" maxlength="300" placeholder="想對某個人說的話,寫下來吧,完全匿名..."></textarea>
+    <div class="count" id="charCount">0 / 300</div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="cancelBtn">取消</button>
+      <button class="btn-submit" id="submitBtn">投稿</button>
+    </div>
+  </div>
+</div>
+
+<!-- 語音告白 -->
+<div class="modal-mask" id="voiceModal">
+  <div class="modal-box">
+    <h3>錄下你的語音告白 🎤</h3>
+    <label>這封信是要給誰的?(選填)</label>
+    <input type="text" id="recipientInputVoice" placeholder="例如:小明 / 三班的她">
+    <div class="record-area">
+      <div class="record-indicator" id="recIndicator">🎙️</div>
+      <div class="record-time" id="recTime">00:00 / 最長 30 秒</div>
+      <div class="recognized-preview" id="recognizedPreview">辨識文字會顯示在這裡...</div>
+      <div class="record-hint" id="recHint">按下開始錄音,說出你的告白</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="voiceCancel">取消</button>
+      <button class="btn-secondary" id="voiceStart">開始錄音</button>
+      <button class="btn-submit" id="voiceStop" style="display:none;">完成,投稿</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="marquee-bar"><div class="marquee-track" id="marqueeTrack"></div></div>
+<div class="controls"><button id="muteBtn">🔊 音樂</button></div>
+
+<!-- Firebase SDK -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, increment, query, orderBy, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
+import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2";
+env.allowLocalModels = false; // 一律從 CDN 抓模型,不嘗試找本機路徑
+
+// ── Firebase 初始化 ──
+const firebaseConfig = {
+  apiKey: "AIzaSyBCNbaCHTxbrD1VaWDNUGob9-blFmmEGN4",
+  authDomain: "valentines-b05b0.firebaseapp.com",
+  projectId: "valentines-b05b0",
+  storageBucket: "valentines-b05b0.firebasestorage.app",
+  messagingSenderId: "24513628250",
+  appId: "1:24513628250:web:41230da37f0a28da95b063",
+  measurementId: "G-G6P9BRE5RG"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+getAnalytics(app);
+
+// ── 本機 ID(代替 personal storage 做一人一票 & 動物分配) ──
+function getLocalId(){
+  let id = localStorage.getItem('valentine-uid');
+  if (!id){ id = crypto.randomUUID(); localStorage.setItem('valentine-uid', id); }
+  return id;
+}
+const MY_UID = getLocalId();
+
+// ── 星星 & 愛心 ──
+const starsEl = document.getElementById('stars');
+for(let i=0;i<70;i++){
+  const s=document.createElement('div'); s.className='star';
+  s.style.left=Math.random()*100+'%'; s.style.top=Math.random()*70+'%';
+  s.style.animationDelay=(Math.random()*3)+'s';
+  s.style.width=s.style.height=(Math.random()*2+1)+'px';
+  starsEl.appendChild(s);
+}
+const heartsBg=document.getElementById('heartsBg');
+const heartEmojis=['💕','💗','💖','💘','🌹'];
+function spawnHeart(){
+  const h=document.createElement('div'); h.className='heart';
+  h.textContent=heartEmojis[Math.floor(Math.random()*heartEmojis.length)];
+  h.style.left=Math.random()*100+'%'; h.style.fontSize=(14+Math.random()*16)+'px';
+  const dur=8+Math.random()*8; h.style.animationDuration=dur+'s';
+  heartsBg.appendChild(h); setTimeout(()=>h.remove(),dur*1000+500);
+}
+setInterval(spawnHeart,800);
+for(let i=0;i<5;i++) setTimeout(spawnHeart,i*300);
+
+// ── 音樂(Tone.js CDN,非 module) ──
+const toneScript = document.createElement('script');
+toneScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js';
+document.head.appendChild(toneScript);
+let started=false, musicOn=true, synthP, loopT, typeSynth;
+async function startMusic(){
+  if(started) return; started=true;
+  try{
+    await Tone.start();
+    const rev=new Tone.Reverb({decay:6,wet:0.55}).toDestination();
+    const flt=new Tone.Filter(1800,"lowpass").connect(rev);
+    synthP=new Tone.PolySynth(Tone.Synth,{oscillator:{type:"sine"},envelope:{attack:1.2,decay:0.8,sustain:0.5,release:3}}).connect(flt);
+    synthP.volume.value=-14;
+    const chords=[["C4","E4","G4","B4"],["A3","C4","E4","G4"],["F3","A3","C4","E4"],["G3","B3","D4","F4"]];
+    let idx=0; Tone.Transport.bpm.value=54;
+    loopT=new Tone.Loop((t)=>{synthP.triggerAttackRelease(chords[idx++%chords.length],"2n",t);},"2n").start(0);
+    Tone.Transport.start();
+  }catch(e){console.warn('音樂失敗',e);}
+}
+document.getElementById('muteBtn').addEventListener('click',async()=>{
+  if(!started){await startMusic();musicOn=true;}
+  else{musicOn=!musicOn; if(musicOn){Tone.Transport.start();if(loopT)loopT.start(0);}else{if(loopT)loopT.stop();Tone.Transport.stop();}}
+  document.getElementById('muteBtn').textContent=musicOn?"🔊 音樂":"🔈 靜音";
+});
+function initTypeSynth(){
+  typeSynth=new Tone.Synth({oscillator:{type:"square"},envelope:{attack:0.001,decay:0.04,sustain:0,release:0.02}}).toDestination();
+  typeSynth.volume.value=-22;
+}
+function playTick(){
+  if(!typeSynth)return;
+  typeSynth.triggerAttackRelease(["C6","D6","E6"][Math.floor(Math.random()*3)],"32n");
+}
+
+// ── 系統句子 ──
+const systemSentences=[
+  {id:'sys-0',text:"願夜晚的星星,都替我說出這句話"},
+  {id:'sys-1',text:"喜歡一個人的心情,是藏不住的"},
+  {id:'sys-2',text:"情人節快樂,願你被溫柔以待"},
+  {id:'sys-3',text:"有些話,寫下來比說出口容易一點"},
+  {id:'sys-4',text:"愛情最美的部分,是還沒說出口的那句喜歡"}
+];
+
+// ── 動物匿名 ──
+const ANIMALS=['斑馬','老虎','貓咪','兔子','狐狸','熊貓','浣熊','海豚','貓頭鷹','刺蝟','水獺','企鵝','梅花鹿','狼','棕熊','孔雀','無尾熊','松鼠','水豚','長頸鹿','小鹿','柴犬','海獅','花栗鼠','獅子','大象','河馬','犀牛','花豹','黑熊','北極熊','袋鼠','樹懶','豪豬','穿山甲','山羊','綿羊','駱駝','羊駝','兔猻','狐獴','臭鼬','土撥鼠','飛鼠','倉鼠','天竺鼠','雪貂','海象','海龜','鯨魚','章魚','水母','螃蟹','烏龜','青蛙','變色龍','蜥蜴','壁虎','鸚鵡','老鷹','天鵝','火鶴','喜鵲','大猩猩','黑猩猩','紅毛猩猩','長臂猿'];
+async function getMyAnimalName(){
+  const ref=doc(db,'users',MY_UID);
+  // 先在 transaction 外快速檢查(省一次不必要的 transaction),真正判斷仍在 transaction 內
+  const preSnap=await getDoc(ref);
+  if(preSnap.exists()&&preSnap.data().animalName) return preSnap.data().animalName;
+
+  const metaRef=doc(db,'meta','usedAnimals');
+  // 用 transaction 把「讀取已用清單、挑選、扣除、寫回」包成原子操作,
+  // 避免多人同時投稿時讀到同一份清單、挑到同一隻動物(race condition)
+  return await runTransaction(db,async(tx)=>{
+    const userSnap=await tx.get(ref);
+    if(userSnap.exists()&&userSnap.data().animalName) return userSnap.data().animalName;
+
+    const usedSnap=await tx.get(metaRef);
+    const used=(usedSnap.exists()&&usedSnap.data().list)||[];
+    const avail=ANIMALS.filter(a=>!used.includes(a));
+    const picked=avail.length>0?avail[Math.floor(Math.random()*avail.length)]:ANIMALS[Math.floor(Math.random()*ANIMALS.length)]+(Math.floor(Math.random()*90)+10);
+
+    tx.set(metaRef,{list:[...used,picked]});
+    tx.set(ref,{animalName:picked,uid:MY_UID},{merge:true});
+    return picked;
+  });
+}
+
+// ── 資料 ──
+let allLetters=[];
+let currentLetterId=null;
+
+function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+async function loadLetters(){
+  const q=query(collection(db,'letters'),orderBy('ts','desc'));
+  const snap=await getDocs(q);
+  allLetters=snap.docs.map(d=>({id:d.id,...d.data()}));
+  document.getElementById('countTag').textContent=`目前已有 ${allLetters.length} 封投稿信`;
+  buildMarquee();
+}
+
+// 即時監聽新增
+onSnapshot(query(collection(db,'letters'),orderBy('ts','desc')),(snap)=>{
+  allLetters=snap.docs.map(d=>({id:d.id,...d.data()}));
+  document.getElementById('countTag').textContent=`目前已有 ${allLetters.length} 封投稿信`;
+  buildMarquee();
+});
+
+function buildMarquee(){
+  const items=[];
+  allLetters.forEach(l=>{
+    if(l.type==='voice'&&!l.text) items.push({label:`🐾 ${l.animalName}的語音告白`,cls:'voice-anon',id:l.id,kind:'letter'});
+    else if(l.type==='voice'&&l.text) items.push({label:`🎤 ${l.text.slice(0,20)}${l.text.length>20?'…':''}`,cls:'user',id:l.id,kind:'letter'});
+    else items.push({label:l.text.slice(0,22)+(l.text.length>22?'…':''),cls:'user',id:l.id,kind:'letter'});
+  });
+  systemSentences.forEach(s=>items.push({label:s.text,cls:'system',id:s.id,kind:'system'}));
+  for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
+  const track=document.getElementById('marqueeTrack');
+  const html=items.map(it=>`<span class="${it.cls}" data-id="${it.id}" data-kind="${it.kind}">${escapeHtml(it.label)}</span>`).join('');
+  track.innerHTML=html+html;
+  track.querySelectorAll('span').forEach(el=>{
+    el.addEventListener('click',()=>{
+      if(el.dataset.kind==='letter') openLetter(el.dataset.id);
+      else openSystemLetter(el.dataset.id);
+    });
+  });
+}
+
+// ── 開信動畫 ──
+async function playMiniAnim(){
+  const mini=document.getElementById('miniEnvelope'),flap=document.getElementById('miniFlap');
+  flap.classList.remove('open'); mini.classList.add('active');
+  await new Promise(r=>setTimeout(r,150)); flap.classList.add('open');
+  await new Promise(r=>setTimeout(r,650)); mini.classList.remove('active');
+}
+function resetPanel(){
+  document.getElementById('guessBox').classList.remove('show');
+  document.getElementById('anonHeading').style.display='none';
+  document.getElementById('audioPlayer').style.display='none';
+  document.getElementById('recipientLine').style.display='none';
+  document.getElementById('typedText').innerHTML='';
+  document.getElementById('guessStatus').style.display='none';
+  document.getElementById('guessInput').disabled=false;
+  document.getElementById('guessSubmit').disabled=false;
+  document.getElementById('guessInput').value='';
+}
+
+async function openLetter(id){
+  await startMusic();
+  if(!typeSynth) initTypeSynth();
+  const letter=allLetters.find(l=>l.id===id);
+  if(!letter) return;
+  currentLetterId=id;
+  await playMiniAnim();
+  resetPanel();
+  if(letter.recipient){
+    document.getElementById('recipientLine').style.display='block';
+    document.getElementById('recipientLine').textContent=`💌 給:${letter.recipient}`;
+  }
+  const tagEl=document.getElementById('letterTag');
+  if(letter.type==='voice'){
+    tagEl.textContent='語音告白'; tagEl.className='tag voice';
+    document.getElementById('audioPlayer').style.display='flex';
+    document.getElementById('audioEl').src=letter.audioData;
+  } else {
+    tagEl.textContent='使用者投稿'; tagEl.className='tag user';
+  }
+  document.getElementById('letterPaper').classList.add('show');
+  if(letter.animalName){
+    document.getElementById('anonHeading').style.display='block';
+    document.getElementById('anonHeading').textContent = letter.type==='voice'&&!letter.text
+      ? `🐾 ${letter.animalName} 的語音告白`
+      : `🐾 匿名${letter.animalName} 的告白`;
+  }
+  if(letter.type==='voice'&&!letter.text){
+    document.getElementById('guessBox').classList.add('show');
+    await setupGuessBox(id);
+  } else {
+    typeWriter(letter.text,0,async()=>{
+      document.getElementById('guessBox').classList.add('show');
+      await setupGuessBox(id);
+    });
+  }
+}
+
+async function openSystemLetter(sysId){
+  await startMusic();
+  if(!typeSynth) initTypeSynth();
+  currentLetterId=sysId;
+  const sys=systemSentences.find(s=>s.id===sysId);
+  if(!sys) return;
+  await playMiniAnim();
+  resetPanel();
+  document.getElementById('letterTag').textContent='系統示範句子';
+  document.getElementById('letterTag').className='tag system';
+  document.getElementById('letterPaper').classList.add('show');
+  typeWriter(sys.text,0,async()=>{
+    document.getElementById('guessBox').classList.add('show');
+    await setupGuessBox(sysId);
+  });
+}
+
+function typeWriter(text,i,onDone){
+  const el=document.getElementById('typedText');
+  if(i===0) el.innerHTML='<span class="cursor">|</span>';
+  if(i<text.length){
+    el.innerHTML=text.slice(0,i+1).replace(/\n/g,'<br>')+'<span class="cursor">|</span>';
+    if(text[i]!=='\n'&&text[i]!==' ') playTick();
+    document.getElementById('letterPaper').scrollTop=document.getElementById('letterPaper').scrollHeight;
+    setTimeout(()=>typeWriter(text,i+1,onDone),42);
+  } else {
+    el.innerHTML=text.replace(/\n/g,'<br>');
+    if(onDone) onDone();
+  }
+}
+document.getElementById('closeBtn').addEventListener('click',()=>{
+  document.getElementById('letterPaper').classList.remove('show');
+  document.getElementById('audioEl').pause();
+});
+
+// ── 猜猜是誰(一人一票) ──
+async function setupGuessBox(letterId){
+  const input=document.getElementById('guessInput'),btn=document.getElementById('guessSubmit'),statusEl=document.getElementById('guessStatus');
+  input.disabled=false; btn.disabled=false; statusEl.style.display='none';
+  // 檢查本機是否猜過
+  const myGuess=localStorage.getItem('guessed:'+letterId);
+  if(myGuess){
+    input.disabled=true; btn.disabled=true;
+    statusEl.style.display='block'; statusEl.textContent=`你已經猜過了:「${myGuess}」`;
+  }
+  await refreshGuesses(letterId);
+}
+async function refreshGuesses(letterId){
+  const listEl=document.getElementById('guessList');
+  listEl.innerHTML='<div style="font-size:12px;color:#bbb;">載入中...</div>';
+  try{
+    const snap=await getDoc(doc(db,'guesses',letterId));
+    const guesses=(snap.exists()&&snap.data().votes)||{};
+    renderGuesses(guesses);
+  }catch(e){ listEl.innerHTML='<div style="font-size:12px;color:#bbb;">還沒有人猜!</div>'; }
+}
+function renderGuesses(guesses){
+  const listEl=document.getElementById('guessList');
+  const entries=Object.entries(guesses).sort((a,b)=>b[1]-a[1]);
+  if(!entries.length){listEl.innerHTML='<div style="font-size:12px;color:#bbb;">還沒有人猜,當第一個吧!</div>';return;}
+  const max=entries[0][1];
+  listEl.innerHTML=entries.map(([name,cnt])=>`
+    <div class="guess-item">
+      <span style="min-width:70px;">${escapeHtml(name)}</span>
+      <div class="guess-bar-wrap"><div class="guess-bar" style="width:${cnt/max*100}%"></div></div>
+      <span>${cnt}</span>
+    </div>`).join('');
+}
+document.getElementById('guessSubmit').addEventListener('click',async()=>{
+  const input=document.getElementById('guessInput'),btn=document.getElementById('guessSubmit'),statusEl=document.getElementById('guessStatus');
+  const name=input.value.trim();
+  if(!name||!currentLetterId||btn.disabled) return;
+  btn.disabled=true; input.disabled=true;
+  try{
+    const ref=doc(db,'guesses',currentLetterId);
+    const snap=await getDoc(ref);
+    const votes=(snap.exists()&&snap.data().votes)||{};
+    votes[name]=(votes[name]||0)+1;
+    await setDoc(ref,{votes},{merge:true});
+    localStorage.setItem('guessed:'+currentLetterId,name);
+    renderGuesses(votes);
+    statusEl.style.display='block'; statusEl.textContent=`你已經猜過了:「${name}」`;
+    showToast('猜測已送出!');
+  }catch(e){ btn.disabled=false; input.disabled=false; showToast('送出失敗,請再試'); }
+});
+
+// ── 投稿方式 ──
+document.getElementById('composeTrigger').addEventListener('click',()=>document.getElementById('choiceModal').classList.add('show'));
+document.getElementById('choiceCancel').addEventListener('click',()=>document.getElementById('choiceModal').classList.remove('show'));
+document.getElementById('chooseText').addEventListener('click',()=>{
+  document.getElementById('choiceModal').classList.remove('show');
+  document.getElementById('letterInput').value='';
+  document.getElementById('charCount').textContent='0 / 300';
+  document.getElementById('recipientInputText').value='';
+  document.getElementById('modalMask').classList.add('show');
+});
+document.getElementById('chooseVoice').addEventListener('click',()=>{
+  document.getElementById('choiceModal').classList.remove('show');
+  resetVoiceModal();
+  document.getElementById('recipientInputVoice').value='';
+  document.getElementById('voiceModal').classList.add('show');
+  // 一進語音模式就先在背景下載辨識模型,跟使用者錄音的時間重疊,盡量不要讓使用者等兩次
+  getAsrPipeline().catch(e=>console.warn('模型預先載入失敗:',e));
+});
+
+// ── 文字投稿 ──
+document.getElementById('cancelBtn').addEventListener('click',()=>document.getElementById('modalMask').classList.remove('show'));
+document.getElementById('letterInput').addEventListener('input',e=>document.getElementById('charCount').textContent=`${e.target.value.length} / 300`);
+document.getElementById('submitBtn').addEventListener('click',async()=>{
+  const text=document.getElementById('letterInput').value.trim();
+  if(!text) return;
+  const recipient=document.getElementById('recipientInputText').value.trim()||null;
+  try{
+    const animalName=await getMyAnimalName();
+    await addDoc(collection(db,'letters'),{type:'text',text,recipient,animalName,uid:MY_UID,ts:Date.now()});
+    document.getElementById('modalMask').classList.remove('show');
+    showToast(`投稿成功!你是「🐾 ${animalName}」`);
+  }catch(e){ console.error(e); showToast('投稿失敗,請稍後再試'); }
+});
+
+// ── 語音告白(優化錄音防斷續與精準 16kHz 重取樣) ──
+let mediaRecorder, audioChunks = [], recordTimer, recordSeconds = 0, currentStream;
+let pendingAudioData = null, pendingRecognizedText = '';
+let asrPipelinePromise = null;
+
+function getAsrPipeline() {
+  if (!asrPipelinePromise) {
+    asrPipelinePromise = pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
+      progress_callback: (p) => {
+        if (p.status === 'progress' && typeof p.progress === 'number') {
+          document.getElementById('recHint').textContent = `辨識模型下載中... ${Math.round(p.progress)}%(第一次使用需要下載,之後會變快)`;
+        }
+      }
+    });
+  }
+  return asrPipelinePromise;
+}
+
+function resetVoiceModal() {
+  document.getElementById('recIndicator').classList.remove('recording');
+  document.getElementById('recTime').textContent = '00:00 / 最長 30 秒';
+  document.getElementById('recognizedPreview').textContent = '辨識文字會顯示在這裡...';
+  document.getElementById('recHint').textContent = '按下開始錄音,說出你的告白';
+  document.getElementById('voiceStart').style.display = 'inline-block';
+  const vstop = document.getElementById('voiceStop');
+  vstop.style.display = 'none'; vstop.disabled = false; vstop.textContent = '完成,投稿'; vstop.onclick = () => stopRecording(false);
+  pendingAudioData = null; pendingRecognizedText = ''; recordSeconds = 0;
+}
+
+document.getElementById('voiceCancel').addEventListener('click', () => { stopRecording(true); document.getElementById('voiceModal').classList.remove('show'); });
+
+document.getElementById('voiceStart').addEventListener('click', async () => {
+  if (!navigator.mediaDevices?.getUserMedia) { showToast('此環境不支援錄音'); return; }
+  try {
+    currentStream = await navigator.mediaDevices.getUserMedia({
+      audio: { 
+        autoGainControl: true, 
+        noiseSuppression: false, // 有時手機抗噪太強會讓聲音斷續，建議關閉或由系統預設
+        echoCancellation: true
+      }
+    });
+  } catch (e) { showToast('無法取得麥克風權限'); return; }
+  
+  audioChunks = [];
+  
+  // 針對不同瀏覽器/手機挑選最穩定的錄音格式
+  let options = { audioBitsPerSecond: 128000 };
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac'];
+  for (const type of types) {
+    if (MediaRecorder.isTypeSupported(type)) {
+      options.mimeType = type;
+      break;
+    }
+  }
+
+  try { 
+    mediaRecorder = new MediaRecorder(currentStream, options); 
+  } catch (e) { 
+    try {
+      mediaRecorder = new MediaRecorder(currentStream); // 萬用降級方案
+    } catch(err) {
+      showToast('此瀏覽器不支援錄音格式'); return; 
+    }
+  }
+
+  mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+  mediaRecorder.onstop = onRecordingStop;
+  
+  // 【關鍵改動】每 250ms 強制寫入一次資料，避免手機瀏覽器快取溢位造成斷續掉封包
+  mediaRecorder.start(250); 
+  
+  recordSeconds = 0;
+  document.getElementById('recIndicator').classList.add('recording');
+  document.getElementById('recHint').textContent = '錄音中...';
+  document.getElementById('recognizedPreview').textContent = '錄完後會一次辨識,請完整說完你的告白...';
+  document.getElementById('voiceStart').style.display = 'none';
+  document.getElementById('voiceStop').style.display = 'inline-block';
+  
+  recordTimer = setInterval(() => {
+    recordSeconds++;
+    const mm = String(Math.floor(recordSeconds / 60)).padStart(2, '0'), ss = String(recordSeconds % 60).padStart(2, '0');
+    document.getElementById('recTime').textContent = `${mm}:${ss} / 最長 30 秒`;
+    if (recordSeconds >= 30) stopRecording(false);
+  }, 1000);
+});
+
+function stopRecording(cancelled) {
+  clearInterval(recordTimer);
+  document.getElementById('recIndicator').classList.remove('recording');
+  if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    if (cancelled) mediaRecorder.onstop = () => {};
+    mediaRecorder.stop();
+  }
+}
+
+// 【關鍵優化】使用 OfflineAudioContext 進行精準且安全的 16kHz 重取樣，防止手機解碼音質爆音或速度異常
+async function blobToPcm16k(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const tempCtx = new AudioCtx();
+  let originalBuffer;
+  try {
+    originalBuffer = await tempCtx.decodeAudioData(arrayBuffer);
+  } finally {
+    tempCtx.close();
+  }
+
+  // 使用離線上下文將聲音完美重取樣至 16000Hz (Whisper 指定格式)
+  const offlineCtx = new OfflineAudioContext(
+    1, 
+    Math.round(originalBuffer.duration * 16000), 
+    16000
+  );
+  
+  const bufferSource = offlineCtx.createBufferSource();
+  bufferSource.buffer = originalBuffer;
+  bufferSource.connect(offlineCtx.destination);
+  bufferSource.start();
+  
+  const renderedBuffer = await offlineCtx.startRendering();
+  return renderedBuffer.getChannelData(0);
+}
+
+async function onRecordingStop() {
+  if (!audioChunks.length) return;
+  // 保持與錄音時相同的 mimeType 封裝 Blob
+  const mimeType = mediaRecorder.mimeType || 'audio/webm';
+  const blob = new Blob(audioChunks, { type: mimeType });
+  
+  try { pendingAudioData = await blobToBase64(blob); }
+  catch (e) { showToast('錄音處理失敗'); return; }
+
+  const vstop = document.getElementById('voiceStop');
+  vstop.disabled = true; 
+  document.getElementById('recHint').textContent = '辨識中,請稍候...(手機上可能需要 10~30 秒)';
+  document.getElementById('recognizedPreview').textContent = '（辨識中...）';
+
+  try {
+    const pcm = await blobToPcm16k(blob);
+    const transcriber = await getAsrPipeline();
+    const result = await transcriber(pcm, { language: 'chinese', task: 'transcribe' });
+    pendingRecognizedText = (result?.text || '').trim();
+  } catch (e) {
+    console.warn('本機語音辨識失敗:', e);
+    pendingRecognizedText = '';
+  }
+
+  vstop.disabled = false;
+  document.getElementById('recognizedPreview').textContent = pendingRecognizedText || '（未辨識到文字,將以動物匿名顯示）';
+  document.getElementById('recHint').textContent = pendingRecognizedText ? '辨識完成!確認送出吧' : '未辨識到文字,將以動物匿名顯示';
+  vstop.textContent = '確認,送出投稿'; vstop.onclick = submitVoiceLetter;
+}
+
+function blobToBase64(blob) {
+  return new Promise((res, r_ej) => { const r = new FileReader(); r.onloadend = () => res(r.result); r.onerror = r_ej; r.readAsDataURL(blob); });
+}
+
+async function submitVoiceLetter() {
+  if (!pendingAudioData) return;
+  const recipient = document.getElementById('recipientInputVoice').value.trim() || null;
+  try {
+    const animalName = await getMyAnimalName();
+    await addDoc(collection(db, 'letters'), { type: 'voice', text: pendingRecognizedText || null, audioData: pendingAudioData, animalName, recipient, uid: MY_UID, ts: Date.now() });
+    document.getElementById('voiceModal').classList.remove('show');
+    showToast(pendingRecognizedText ? '投稿成功!已加入跑馬燈 🎤' : `投稿成功!你是「🐾 ${animalName}」`);
+  } catch (e) { console.error(e); showToast('投稿失敗,請稍後再試'); }
+}
