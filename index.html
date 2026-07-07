@@ -276,6 +276,20 @@ document.getElementById('muteBtn').addEventListener('click',async()=>{
   else{musicOn=!musicOn; if(musicOn){Tone.Transport.start();if(loopT)loopT.start(0);}else{if(loopT)loopT.stop();Tone.Transport.stop();}}
   document.getElementById('muteBtn').textContent=musicOn?"🔊 音樂":"🔈 靜音";
 });
+
+// 【v11】錄音期間暫停背景音樂：喇叭播音樂 + echoCancellation 會把人聲攪爛（實測錄音只剩 -22dB 雜音）
+let musicPausedForRec=false;
+function pauseMusicForRecording(){
+  if(typeof Tone!=='undefined' && started && musicOn){
+    try{ if(loopT)loopT.stop(); Tone.Transport.pause(); musicPausedForRec=true; }catch(e){}
+  }
+}
+function resumeMusicAfterRecording(){
+  if(musicPausedForRec){
+    try{ Tone.Transport.start(); if(loopT)loopT.start(0); }catch(e){}
+    musicPausedForRec=false;
+  }
+}
 function initTypeSynth(){
   typeSynth=new Tone.Synth({oscillator:{type:"square"},envelope:{attack:0.001,decay:0.04,sustain:0,release:0.02}}).toDestination();
   typeSynth.volume.value=-22;
@@ -600,17 +614,18 @@ document.getElementById('voiceCancel').addEventListener('click', () => { stopRec
 
 document.getElementById('voiceStart').addEventListener('click', async () => {
   if (!navigator.mediaDevices?.getUserMedia) { showToast('此環境不支援錄音'); return; }
+  // 【v11】錄音前暫停背景音樂，避免回音消除把人聲攪爛
+  pauseMusicForRecording();
   try {
     currentStream = await navigator.mediaDevices.getUserMedia({
       audio: { 
-        autoGainControl: true, 
-        noiseSuppression: true,
-        echoCancellation: true,
-        channelCount: { ideal: 1 },
-        sampleRate: { ideal: 48000 }
+        autoGainControl: true,       // 自動增益：小聲說話自動放大
+        noiseSuppression: false,     // 【v11】關閉：NS 會把較小的人聲當噪音吃掉
+        echoCancellation: false,     // 【v11】關閉：音樂已暫停，無回音源；AEC 是錄音只剩雜音的元凶
+        channelCount: { ideal: 1 }
       }
     });
-  } catch (e) { showToast('無法取得麥克風權限'); return; }
+  } catch (e) { resumeMusicAfterRecording(); showToast('無法取得麥克風權限'); return; }
   
   audioChunks = [];
   
@@ -663,6 +678,7 @@ function stopRecording(cancelled) {
       mediaRecorder.onstop = () => {};
       try { mediaRecorder.stop(); } catch(e){}
       if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+      resumeMusicAfterRecording();  // 【v11】取消也要恢復音樂
       return;
     }
     // 【修正】手機 stop 時最後一塊資料可能還沒送達，先強制 requestData 收尾
@@ -674,6 +690,7 @@ function stopRecording(cancelled) {
     }, 250);
   } else {
     if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+    resumeMusicAfterRecording();
   }
 }
 
@@ -706,6 +723,7 @@ async function blobToPcm16k(blob) {
 }
 
 async function onRecordingStop() {
+  resumeMusicAfterRecording();  // 【v11】辨識開始即可恢復音樂
   if (!audioChunks.length) return;
   // 保持與錄音時相同的 mimeType 封裝 Blob
   const mimeType = mediaRecorder.mimeType || 'audio/webm';
@@ -731,6 +749,11 @@ async function onRecordingStop() {
       sourceInfo = `${result.source}·${result.duration}s`;
       if (result.geminiError) {
         sourceInfo += `｜${result.geminiError.substring(0, 80)}`;
+      }
+      // 【v11】警告：音量過低 / 錄音被截斷（有效音訊遠短於錄音計時）
+      if (result.lowVolume) sourceInfo += '｜⚠️音量偏低,建議靠近麥克風重錄';
+      if (recordSeconds >= 3 && parseFloat(result.duration) < recordSeconds * 0.6) {
+        sourceInfo += `｜⚠️錄音疑似中斷(計時${recordSeconds}s但只收到${result.duration}s)`;
       }
       console.log(`✅ ${result.source} 辨識完成`);
     } else {
@@ -832,6 +855,7 @@ function dynamicRangeCompression(samples, threshold = 0.5, ratio = 4) {
 }
 
 // 【PCM 轉換】帶音量正規化
+let lastRawPeak = 0;  // 【v11】正規化前的原始峰值，供低音量判斷
 async function blobToPcm16kWithNormalization(blob) {
   const arrayBuffer = await blob.arrayBuffer();
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -845,6 +869,12 @@ async function blobToPcm16kWithNormalization(blob) {
   }
 
   const rawChannelData = originalBuffer.getChannelData(0);
+  // 【v11】記錄原始峰值（正規化前）
+  lastRawPeak = 0;
+  for (let i = 0; i < rawChannelData.length; i++) {
+    const abs = Math.abs(rawChannelData[i]);
+    if (abs > lastRawPeak) lastRawPeak = abs;
+  }
   const compressedData = dynamicRangeCompression(rawChannelData);
   
   const offlineCtx = new OfflineAudioContext(
@@ -1041,6 +1071,16 @@ function dedupeRepeats(text) {
   return result;
 }
 
+// 【v11】裁掉頭尾靜音（正規化後閾值 0.01），保留 0.1s 邊界
+function trimSilence(pcm, thresh = 0.01) {
+  let s = 0, e = pcm.length - 1;
+  while (s < e && Math.abs(pcm[s]) < thresh) s++;
+  while (e > s && Math.abs(pcm[e]) < thresh) e--;
+  const pad = 1600;  // 0.1s @16kHz
+  s = Math.max(0, s - pad); e = Math.min(pcm.length - 1, e + pad);
+  return pcm.slice(s, e + 1);
+}
+
 // 【智能降級】自動嘗試所有方案（統一轉 16kHz WAV，格式全平台相容）
 async function recognizeWithFallback(audioBase64, blob) {
   console.log('開始辨識...優先順序: Gemini (3 key) → Whisper');
@@ -1053,6 +1093,15 @@ async function recognizeWithFallback(audioBase64, blob) {
   } catch (e) {
     return { text: '', source: 'None', success: false, error: '音訊解碼失敗: ' + e.message };
   }
+  // 【v11】裁掉頭尾靜音
+  pcm = trimSilence(pcm);
+  // 【v11】低音量偵測（原始峰值 < 0.02 ≈ -34dB，正常說話應 > 0.1）
+  const lowVolume = lastRawPeak < 0.02;
+  // 【v11】有效語音過短 → 直接失敗並提示
+  if (pcm.length < 16000 * 0.3) {
+    return { text: '', source: 'None', success: false,
+      error: lowVolume ? '錄音音量過低,幾乎收不到聲音,請靠近麥克風大聲一點' : '有效語音過短,請重新錄製' };
+  }
   // 【診斷】實際解碼出的音訊長度（若遠短於錄音時間 = 音訊被截斷）
   const duration = (pcm.length / 16000).toFixed(1);
 
@@ -1061,7 +1110,7 @@ async function recognizeWithFallback(audioBase64, blob) {
     console.log(`嘗試 Gemini API (WAV 格式, ${duration}s)...`);
     const wavBase64 = 'data:audio/wav;base64,' + pcm16kToWavBase64(pcm);
     const text = dedupeRepeats(filterHallucination(await recognizeWithGemini(wavBase64, 'audio/wav')));
-    if (text) return { text, source: 'Gemini', success: true, duration };
+    if (text) return { text, source: 'Gemini', success: true, duration, lowVolume };
     errors.push('Gemini: 回傳空白（可能無語音內容）');
   } catch (geminiErr) {
     console.warn('Gemini 全部失敗:', geminiErr.message);
@@ -1077,7 +1126,7 @@ async function recognizeWithFallback(audioBase64, blob) {
     API_CONFIG.stats.whisper++;
     const text = dedupeRepeats(filterHallucination((result?.text || '').trim()));
     // 【改動】即使 Whisper 成功，也帶回 Gemini 失敗原因供畫面顯示
-    if (text) return { text, source: 'Whisper', success: true, duration, geminiError: errors[0] || '' };
+    if (text) return { text, source: 'Whisper', success: true, duration, lowVolume, geminiError: errors[0] || '' };
     errors.push('Whisper: 未辨識到有效文字');
   } catch (whisperErr) {
     console.error('Whisper 失敗:', whisperErr.message);
@@ -1137,7 +1186,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v10·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v11·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
