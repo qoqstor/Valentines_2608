@@ -715,16 +715,53 @@ async function submitVoiceLetter() {
 // 【新增】語音辨識改進 - 3 Key 輪流備援
 // ============================================
 
-// 【配置】3 個 Gemini API Key（改成你的 key）
+// 【配置】用戶輸入 API Key（簡化方案）
 const API_CONFIG = {
-  gemini: [
-    '__GEMINI_KEY_1__',
-    '__GEMINI_KEY_2__',
-    '__GEMINI_KEY_3__'
-  ],
+  gemini: ['', '', ''],  // 空的，由用戶輸入
   geminiIndex: 0,
   stats: { gemini: [0, 0, 0], whisper: 0, failedAttempts: 0 }
 };
+
+// 【新增】加載已保存的 API Key
+function loadApiKeys() {
+  const saved = localStorage.getItem('voice_api_keys');
+  if (saved) {
+    try {
+      const keys = JSON.parse(saved);
+      API_CONFIG.gemini = keys;
+      console.log('✅ 已加載 API Keys');
+      return true;
+    } catch (e) {
+      console.warn('⚠️ 加載 API Keys 失敗');
+      return false;
+    }
+  }
+  console.warn('⚠️ 尚未設置 API Keys，請執行: setApiKeys("key1", "key2", "key3")');
+  return false;
+}
+
+// 【新增】設置 API Key（用戶在控制台調用）
+function setApiKeys(key1, key2, key3) {
+  if (!key1 && !key2 && !key3) {
+    alert('⚠️ 至少需要 1 個 API Key');
+    return;
+  }
+  
+  API_CONFIG.gemini = [key1 || '', key2 || '', key3 || ''];
+  localStorage.setItem('voice_api_keys', JSON.stringify(API_CONFIG.gemini));
+  
+  const count = [key1, key2, key3].filter(k => k).length;
+  console.log(`✅ API Keys 已保存 (${count} 個)`);
+  alert(`✅ API Keys 已保存到瀏覽器本地 (${count} 個)`);
+}
+
+// 【新增】清除 API Key
+function clearApiKeys() {
+  if (!confirm('確定要清除所有 API Keys？')) return;
+  API_CONFIG.gemini = ['', '', ''];
+  localStorage.removeItem('voice_api_keys');
+  console.log('✅ API Keys 已清除');
+}
 
 // 【輪換機制】自動切換 API Key
 function getNextGeminiKey() {
@@ -933,7 +970,14 @@ window.showApiStats = function() {
   console.log('詳細統計:', stats);
 };
 
+// 【初始化】頁面加載時加載 API Keys
+window.addEventListener('load', () => {
+  loadApiKeys();
+});
+
 console.log('✅ 語音辨識改進模塊已加載');
+console.log('💡 在控制台執行: setApiKeys("key1", "key2", "key3") 來設置 API Keys');
+
 </script>
 </body>
 </html>
