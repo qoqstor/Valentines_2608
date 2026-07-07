@@ -717,50 +717,19 @@ async function submitVoiceLetter() {
 
 // 【配置】用戶輸入 API Key（簡化方案）
 const API_CONFIG = {
-  gemini: ['', '', ''],  // 空的，由用戶輸入
+  gemini: [
+    '__GEMINI_KEY_1__',
+    '__GEMINI_KEY_2__',
+    '__GEMINI_KEY_3__'
+  ],  // GitHub Actions 部署時自動注入
   geminiIndex: 0,
   stats: { gemini: [0, 0, 0], whisper: 0, failedAttempts: 0 }
 };
 
-// 【新增】加載已保存的 API Key
-function loadApiKeys() {
-  const saved = localStorage.getItem('voice_api_keys');
-  if (saved) {
-    try {
-      const keys = JSON.parse(saved);
-      API_CONFIG.gemini = keys;
-      console.log('✅ 已加載 API Keys');
-      return true;
-    } catch (e) {
-      console.warn('⚠️ 加載 API Keys 失敗');
-      return false;
-    }
-  }
-  console.warn('⚠️ 尚未設置 API Keys，請執行: setApiKeys("key1", "key2", "key3")');
-  return false;
-}
-
-// 【新增】設置 API Key（用戶在控制台調用）
+// 【備用】手動覆寫 API Key（僅供除錯，正式 Key 由 GitHub Actions 注入）
 function setApiKeys(key1, key2, key3) {
-  if (!key1 && !key2 && !key3) {
-    alert('⚠️ 至少需要 1 個 API Key');
-    return;
-  }
-  
   API_CONFIG.gemini = [key1 || '', key2 || '', key3 || ''];
-  localStorage.setItem('voice_api_keys', JSON.stringify(API_CONFIG.gemini));
-  
-  const count = [key1, key2, key3].filter(k => k).length;
-  console.log(`✅ API Keys 已保存 (${count} 個)`);
-  alert(`✅ API Keys 已保存到瀏覽器本地 (${count} 個)`);
-}
-
-// 【新增】清除 API Key
-function clearApiKeys() {
-  if (!confirm('確定要清除所有 API Keys？')) return;
-  API_CONFIG.gemini = ['', '', ''];
-  localStorage.removeItem('voice_api_keys');
-  console.log('✅ API Keys 已清除');
+  console.log('✅ API Keys 已臨時覆寫（僅本次頁面有效）');
 }
 
 // 【輪換機制】自動切換 API Key
@@ -835,73 +804,69 @@ async function blobToPcm16kWithNormalization(blob) {
   return renderedBuffer.getChannelData(0);
 }
 
-// 【Gemini API 辨識】3 key 輪流備援
-async function recognizeWithGemini(audioBase64, attempt = 1) {
-  const { key, index, attempt: attemptNum } = attempt === 1 ? getNextGeminiKey() : { 
-    key: API_CONFIG.gemini[(API_CONFIG.geminiIndex + attempt - 2) % 3],
-    index: (API_CONFIG.geminiIndex + attempt - 2) % 3,
-    attempt: attemptNum
-  };
+// 【Gemini API 辨識】3 key 輪流備援（修正版：迴圈依序嘗試，任何錯誤都換下一個 key）
+async function recognizeWithGemini(audioBase64, mimeType = 'audio/webm') {
+  let lastError = null;
 
-  if (!key || key.startsWith('YOUR_')) {
-    throw new Error(`Gemini Key ${index + 1} 未設置`);
-  }
+  for (let i = 0; i < API_CONFIG.gemini.length; i++) {
+    const { key, index } = getNextGeminiKey();
 
-  try {
-    const response = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + key,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{
-              text: '你是精確的中文語音轉錄系統。將語音精確轉錄為中文，只返回文本，無需其他補充。'
-            }]
-          },
-          contents: [{
-            parts: [
-              {
-                inline_data: {
-                  mime_type: 'audio/webm',
-                  data: audioBase64.split(',')[1]
-                }
-              },
-              { text: '轉錄此語音為中文' }
-            ]
-          }]
-        })
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      const errorMsg = data.error?.message || '';
-      
-      if (errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED')) {
-        console.warn(`❌ Gemini Key ${index + 1} 配額已滿，嘗試下一個...`);
-        
-        if (attempt < 3) {
-          return recognizeWithGemini(audioBase64, attempt + 1);
-        } else {
-          throw new Error('3 個 Gemini Key 都已超限');
-        }
-      }
-      
-      throw new Error(errorMsg);
+    // 佔位符未被 GitHub Actions 替換，或 key 為空 → 跳過
+    if (!key || key.startsWith('__') || key.startsWith('YOUR_')) {
+      lastError = new Error(`Gemini Key ${index + 1} 未設置`);
+      console.warn(lastError.message);
+      continue;
     }
 
-    const text = data.contents?.[0]?.parts?.[0]?.text || '';
-    
-    API_CONFIG.stats.gemini[index]++;
-    console.log(`✅ Gemini Key ${index + 1} 成功 (總計 ${API_CONFIG.stats.gemini[index]} 次)`);
-    
-    return text.trim();
-  } catch (error) {
-    console.error(`Gemini Key ${index + 1} 錯誤:`, error.message);
-    throw error;
+    try {
+      const response = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + key,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{
+                text: '你是精確的中文語音轉錄系統。將語音精確轉錄為繁體中文，只返回轉錄文本，無需任何其他補充。若無法辨識則返回空字串。'
+              }]
+            },
+            contents: [{
+              parts: [
+                {
+                  inline_data: {
+                    mime_type: mimeType,  // 【修正】使用實際錄音格式（iOS 是 audio/mp4）
+                    data: audioBase64.split(',')[1]
+                  }
+                },
+                { text: '轉錄此語音為繁體中文' }
+              ]
+            }]
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        lastError = new Error(data.error?.message || `HTTP ${response.status}`);
+        console.warn(`❌ Gemini Key ${index + 1} 失敗: ${lastError.message}，嘗試下一個...`);
+        continue;  // 【修正】任何錯誤（配額/無效key/權限）都換下一個 key
+      }
+
+      // 【修正】Gemini 回應的正確路徑是 candidates，不是 contents
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+      API_CONFIG.stats.gemini[index]++;
+      console.log(`✅ Gemini Key ${index + 1} 成功 (總計 ${API_CONFIG.stats.gemini[index]} 次)`);
+
+      return text.trim();
+    } catch (error) {
+      lastError = error;
+      console.warn(`❌ Gemini Key ${index + 1} 網路錯誤: ${error.message}，嘗試下一個...`);
+    }
   }
+
+  throw lastError || new Error('所有 Gemini Key 都失敗');
 }
 
 // 【本機 Whisper】完全離線備選
@@ -925,10 +890,11 @@ async function recognizeWithWhisper(blob) {
 async function recognizeWithFallback(audioBase64, blob) {
   console.log('開始辨識...優先順序: Gemini (3 key) → Whisper');
 
-  // 【第 1 層】Gemini（3 個 key）
+  // 【第 1 層】Gemini（3 個 key，使用實際錄音格式）
   try {
     console.log('嘗試 Gemini API...');
-    const text = await recognizeWithGemini(audioBase64);
+    const mimeType = (blob.type || 'audio/webm').split(';')[0];  // 去掉 codecs 參數
+    const text = await recognizeWithGemini(audioBase64, mimeType);
     return { text, source: 'Gemini', success: true };
   } catch (geminiErr) {
     console.warn('Gemini 全部失敗:', geminiErr.message);
@@ -970,13 +936,17 @@ window.showApiStats = function() {
   console.log('詳細統計:', stats);
 };
 
-// 【初始化】頁面加載時加載 API Keys
+// 【初始化】
 window.addEventListener('load', () => {
-  loadApiKeys();
+  const injected = API_CONFIG.gemini.filter(k => k && !k.startsWith('__')).length;
+  if (injected === 0) {
+    console.warn('⚠️ API Key 佔位符未被替換，請確認 GitHub Actions 部署成功且 Pages 使用 gh-pages 分支');
+  } else {
+    console.log(`✅ 已注入 ${injected} 個 API Key`);
+  }
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
-console.log('💡 在控制台執行: setApiKeys("key1", "key2", "key3") 來設置 API Keys');
 
 </script>
 </body>
