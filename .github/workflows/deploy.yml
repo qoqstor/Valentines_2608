@@ -12,8 +12,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
     - name: Inject API Keys
       run: |
@@ -23,12 +22,10 @@ jobs:
 
     - name: Verify injection
       run: |
-        if grep -q "__GEMINI_KEY" index.html; then
-          echo "仍有未替換的佔位符"; exit 1
-        fi
-        echo "金鑰注入完成"
+        if grep -q "__GEMINI_KEY" index.html; then exit 1; fi
 
     - name: Deploy to GitHub Pages
       uses: peaceiris/actions-gh-pages@v4
       with:
-        github_token: ${
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./
