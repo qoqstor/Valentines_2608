@@ -19,6 +19,7 @@
   @keyframes floatUp { 0%{transform:translateY(0) translateX(0) rotate(0deg);opacity:0;} 10%{opacity:0.9;} 100%{transform:translateY(-110vh) translateX(20px) rotate(25deg);opacity:0;} }
   .scene { position:relative; height:100%; display:flex; align-items:center; justify-content:center; flex-direction:column; z-index:2; padding-bottom:50px; }
   .title { position:fixed; top:18px; left:0; right:0; text-align:center; color:#ffdce9; letter-spacing:4px; font-size:15px; z-index:3; opacity:0.85;}
+  .countdown { position:fixed; top:42px; left:0; right:0; text-align:center; color:#c9a8ff; letter-spacing:2px; font-size:12px; z-index:3; opacity:0.9; text-shadow:0 0 8px rgba(201,168,255,0.5); }
   .envelope-wrap { text-align:center; cursor:pointer; user-select:none; }
   .envelope { position:relative; width:230px; height:150px; margin:0 auto; filter: drop-shadow(0 10px 25px rgba(255,70,130,0.35)); transition: transform 0.4s; }
   .envelope-wrap:hover .envelope { transform: translateY(-6px) scale(1.02); }
@@ -106,6 +107,7 @@
 <div class="stars" id="stars"></div>
 <div id="heartsBg"></div>
 <div class="title">💌 匿名情人節告白信牆</div>
+<div class="countdown" id="countdown"></div>
 
 <div class="scene">
   <div class="envelope-wrap" id="composeTrigger">
@@ -1085,6 +1087,22 @@ window.showApiStats = function() {
 };
 
 // 【初始化】
+// 【新增】倒數至 2026/8/19（七夕）00:00 台灣時間
+const COUNTDOWN_TARGET = new Date('2026-08-19T00:00:00+08:00').getTime();
+function updateCountdown() {
+  const el = document.getElementById('countdown');
+  if (!el) return;
+  const diff = COUNTDOWN_TARGET - Date.now();
+  if (diff <= 0) { el.textContent = '💕 8/19 到了,把心意說出口吧!'; return; }
+  const d = Math.floor(diff / 86400000);
+  const h = String(Math.floor(diff % 86400000 / 3600000)).padStart(2, '0');
+  const m = String(Math.floor(diff % 3600000 / 60000)).padStart(2, '0');
+  const s = String(Math.floor(diff % 60000 / 1000)).padStart(2, '0');
+  el.textContent = `⏳ 距離 8/19 還有 ${d} 天 ${h}:${m}:${s}`;
+}
+updateCountdown();
+setInterval(updateCountdown, 1000);
+
 window.addEventListener('load', () => {
   const injected = API_CONFIG.gemini.filter(k => k && !k.startsWith('__')).length;
   if (injected === 0) {
@@ -1094,7 +1112,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v8·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v9·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
