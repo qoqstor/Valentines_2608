@@ -1,0 +1,37 @@
+name: Deploy with API Keys
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:    # 允許在 Actions 頁面手動觸發,不用推代碼
+
+permissions:
+  contents: write       # 關鍵!新倉庫預設唯讀,沒這行部署會 403 失敗
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Inject API Keys
+      run: |
+        sed -i "s/__GEMINI_KEY_1__/${{ secrets.GEMINI_KEY_1 }}/g" index.html
+        sed -i "s/__GEMINI_KEY_2__/${{ secrets.GEMINI_KEY_2 }}/g" index.html
+        sed -i "s/__GEMINI_KEY_3__/${{ secrets.GEMINI_KEY_3 }}/g" index.html
+
+    - name: Verify injection
+      run: |
+        if grep -q "__GEMINI_KEY" index.html; then
+          echo "仍有未替換的佔位符"; exit 1
+        fi
+        echo "金鑰注入完成"
+
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./
+
+
