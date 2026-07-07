@@ -331,8 +331,7 @@ function escapeHtml(s){const d=document.createElement('div');d.textContent=s;ret
 
 // 【新增】統一更新計數列（信件數 + 猜中統計，不指明哪封信/哪個人）
 function updateCountTag(){
-  const guessPart=correctGuessCount>0?` ｜ 🎯 已有 ${correctGuessCount} 人猜中`:'';
-  document.getElementById('countTag').textContent=`目前已有 ${allLetters.length} 封投稿信${guessPart}`;
+  document.getElementById('countTag').textContent=`目前已有 ${allLetters.length} 封投稿信 ｜ 🎯 已有 ${correctGuessCount} 人猜中`;
 }
 
 // 【新增】即時監聽全站猜中統計
@@ -1010,6 +1009,35 @@ function filterHallucination(text) {
   return text;
 }
 
+// 【v7 新增】Whisper 迴圈幻覺去重：同一句重複多次 → 只留一次
+function dedupeRepeats(text) {
+  if (!text) return '';
+  // 去掉包裹用的全形/半形括號
+  let t = text.replace(/[()（）\[\]【】]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  // 依標點切段，去除「連續重複」的段落
+  const segs = t.split(/(?<=[。！？!?，,、\s])/).map(s => s.trim()).filter(Boolean);
+  const out = [];
+  for (const s of segs) {
+    const norm = s.replace(/[。！？!?，,、\s]/g, '');
+    const lastNorm = out.length ? out[out.length - 1].replace(/[。！？!?，,、\s]/g, '') : null;
+    if (norm && norm === lastNorm) continue;  // 連續重複 → 跳過
+    out.push(s);
+  }
+  let result = out.join('').trim();
+  // 整串仍是同一短語重複拼接（無標點分隔）的情況：偵測週期性重複
+  const compact = result.replace(/[。！？!?，,、\s]/g, '');
+  for (let len = 2; len <= Math.floor(compact.length / 2); len++) {
+    if (compact.length % len === 0) {
+      const unit = compact.slice(0, len);
+      if (unit.repeat(compact.length / len) === compact && compact.length / len >= 3) {
+        return unit;  // 重複 3 次以上 → 只留一個單位
+      }
+    }
+  }
+  return result;
+}
+
 // 【智能降級】自動嘗試所有方案（統一轉 16kHz WAV，格式全平台相容）
 async function recognizeWithFallback(audioBase64, blob) {
   console.log('開始辨識...優先順序: Gemini (3 key) → Whisper');
@@ -1029,7 +1057,7 @@ async function recognizeWithFallback(audioBase64, blob) {
   try {
     console.log(`嘗試 Gemini API (WAV 格式, ${duration}s)...`);
     const wavBase64 = 'data:audio/wav;base64,' + pcm16kToWavBase64(pcm);
-    const text = filterHallucination(await recognizeWithGemini(wavBase64, 'audio/wav'));
+    const text = dedupeRepeats(filterHallucination(await recognizeWithGemini(wavBase64, 'audio/wav')));
     if (text) return { text, source: 'Gemini', success: true, duration };
     errors.push('Gemini: 回傳空白（可能無語音內容）');
   } catch (geminiErr) {
@@ -1044,7 +1072,7 @@ async function recognizeWithFallback(audioBase64, blob) {
     const transcriber = await getAsrPipeline();
     const result = await transcriber(pcm, { language: 'chinese', task: 'transcribe' });
     API_CONFIG.stats.whisper++;
-    const text = filterHallucination((result?.text || '').trim());
+    const text = dedupeRepeats(filterHallucination((result?.text || '').trim()));
     // 【改動】即使 Whisper 成功，也帶回 Gemini 失敗原因供畫面顯示
     if (text) return { text, source: 'Whisper', success: true, duration, geminiError: errors[0] || '' };
     errors.push('Whisper: 未辨識到有效文字');
@@ -1090,7 +1118,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v4·Key:${injected})`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v7·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
