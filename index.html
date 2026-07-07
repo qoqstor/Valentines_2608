@@ -165,8 +165,6 @@
     <h3>寫下你的匿名告白 💗</h3>
     <label>這封信是要給誰的?(選填)</label>
     <input type="text" id="recipientInputText" placeholder="例如:小明 / 三班的她">
-    <label>你的名字(供猜中驗證,不會公開,選填)</label>
-    <input type="text" id="authorInputText" placeholder="不填則此信無法被猜中">
     <label>告白內容</label>
     <textarea id="letterInput" maxlength="300" placeholder="想對某個人說的話,寫下來吧,完全匿名..."></textarea>
     <div class="count" id="charCount">0 / 300</div>
@@ -183,8 +181,6 @@
     <h3>錄下你的語音告白 🎤</h3>
     <label>這封信是要給誰的?(選填)</label>
     <input type="text" id="recipientInputVoice" placeholder="例如:小明 / 三班的她">
-    <label>你的名字(供猜中驗證,不會公開,選填)</label>
-    <input type="text" id="authorInputVoice" placeholder="不填則此信無法被猜中">
     <div class="record-area">
       <div class="record-indicator" id="recIndicator">🎙️</div>
       <div class="record-time" id="recTime">00:00 / 最長 20 秒</div>
@@ -325,20 +321,12 @@ async function getMyAnimalName(){
 // ── 資料 ──
 let allLetters=[];
 let currentLetterId=null;
-let correctGuessCount=0;  // 【新增】全站猜中人數
 
 function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
-// 【新增】統一更新計數列（信件數 + 猜中統計，不指明哪封信/哪個人）
 function updateCountTag(){
-  document.getElementById('countTag').textContent=`目前已有 ${allLetters.length} 封投稿信 ｜ 🎯 已有 ${correctGuessCount} 人猜中`;
+  document.getElementById('countTag').textContent=`目前已有 ${allLetters.length} 封投稿信`;
 }
-
-// 【新增】即時監聽全站猜中統計
-onSnapshot(doc(db,'meta','guessStats'),(snap)=>{
-  correctGuessCount=(snap.exists()&&snap.data().correct)||0;
-  updateCountTag();
-});
 
 async function loadLetters(){
   const q=query(collection(db,'letters'),orderBy('ts','desc'));
@@ -509,9 +497,6 @@ function renderGuesses(guesses){
       <span>${cnt}</span>
     </div>`).join('');
 }
-// 【新增】名字正規化（去空白、轉小寫）供猜中比對
-function normalizeName(s){ return (s||'').trim().toLowerCase().replace(/\s+/g,''); }
-
 document.getElementById('guessSubmit').addEventListener('click',async()=>{
   const input=document.getElementById('guessInput'),btn=document.getElementById('guessSubmit'),statusEl=document.getElementById('guessStatus');
   const name=input.value.trim();
@@ -536,11 +521,6 @@ document.getElementById('guessSubmit').addEventListener('click',async()=>{
     renderGuesses(votesResult);
     statusEl.style.display='block'; statusEl.textContent=`你已經猜過了:「${name}」`;
     showToast('猜測已送出!');
-    // 【新增】猜中檢查：只累計全站計數，不向猜測者透露對錯、不標記哪封信
-    const letter=allLetters.find(l=>l.id===letterId);
-    if(letter&&letter.authorName&&normalizeName(name)===normalizeName(letter.authorName)){
-      setDoc(doc(db,'meta','guessStats'),{correct:increment(1)},{merge:true}).catch(()=>{});
-    }
   }catch(e){
     if(e.message==='ALREADY_GUESSED'){
       statusEl.style.display='block'; statusEl.textContent='你已經猜過這封信了(每人限一次)';
@@ -559,14 +539,12 @@ document.getElementById('chooseText').addEventListener('click',()=>{
   document.getElementById('letterInput').value='';
   document.getElementById('charCount').textContent='0 / 300';
   document.getElementById('recipientInputText').value='';
-  document.getElementById('authorInputText').value='';
   document.getElementById('modalMask').classList.add('show');
 });
 document.getElementById('chooseVoice').addEventListener('click',()=>{
   document.getElementById('choiceModal').classList.remove('show');
   resetVoiceModal();
   document.getElementById('recipientInputVoice').value='';
-  document.getElementById('authorInputVoice').value='';
   document.getElementById('voiceModal').classList.add('show');
   // 一進語音模式就先在背景下載辨識模型,跟使用者錄音的時間重疊,盡量不要讓使用者等兩次
   getAsrPipeline().catch(e=>console.warn('模型預先載入失敗:',e));
@@ -579,10 +557,9 @@ document.getElementById('submitBtn').addEventListener('click',async()=>{
   const text=document.getElementById('letterInput').value.trim();
   if(!text) return;
   const recipient=document.getElementById('recipientInputText').value.trim()||null;
-  const authorName=document.getElementById('authorInputText').value.trim()||null;
   try{
     const animalName=await getMyAnimalName();
-    await addDoc(collection(db,'letters'),{type:'text',text,recipient,authorName,animalName,uid:MY_UID,ts:Date.now()});
+    await addDoc(collection(db,'letters'),{type:'text',text,recipient,animalName,uid:MY_UID,ts:Date.now()});
     document.getElementById('modalMask').classList.remove('show');
     showToast(`投稿成功!你是「🐾 ${animalName}」`);
   }catch(e){ console.error(e); showToast('投稿失敗,請稍後再試'); }
@@ -768,10 +745,9 @@ function blobToBase64(blob) {
 async function submitVoiceLetter() {
   if (!pendingAudioData) return;
   const recipient = document.getElementById('recipientInputVoice').value.trim() || null;
-  const authorName = document.getElementById('authorInputVoice').value.trim() || null;
   try {
     const animalName = await getMyAnimalName();
-    await addDoc(collection(db, 'letters'), { type: 'voice', text: pendingRecognizedText || null, audioData: pendingAudioData, animalName, recipient, authorName, uid: MY_UID, ts: Date.now() });
+    await addDoc(collection(db, 'letters'), { type: 'voice', text: pendingRecognizedText || null, audioData: pendingAudioData, animalName, recipient, uid: MY_UID, ts: Date.now() });
     document.getElementById('voiceModal').classList.remove('show');
     showToast(pendingRecognizedText ? '投稿成功!已加入跑馬燈 🎤' : `投稿成功!你是「🐾 ${animalName}」`);
   } catch (e) { console.error(e); showToast('投稿失敗,請稍後再試'); }
@@ -1118,7 +1094,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v7·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v8·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
