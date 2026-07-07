@@ -674,6 +674,7 @@ async function onRecordingStop() {
   document.getElementById('recHint').textContent = '辨識中,請稍候...';
   document.getElementById('recognizedPreview').textContent = '（辨識中...）';
 
+  let failReason = '';
   try {
     // 【改動】使用新的智能降級方案：Gemini → Whisper
     const result = await recognizeWithFallback(pendingAudioData, blob);
@@ -683,15 +684,19 @@ async function onRecordingStop() {
       console.log(`✅ ${result.source} 辨識完成`);
     } else {
       pendingRecognizedText = '';
+      failReason = result.error || '';
       console.warn('⚠️ 辨識失敗:', result.error);
     }
   } catch (e) {
     console.error('未預期的錯誤:', e);
     pendingRecognizedText = '';
+    failReason = e.message || '';
   }
 
   vstop.disabled = false;
-  document.getElementById('recognizedPreview').textContent = pendingRecognizedText || '（未辨識到文字,將以動物匿名顯示）';
+  // 【改動】失敗時在畫面顯示原因，手機不用開控制台也能除錯
+  document.getElementById('recognizedPreview').textContent = pendingRecognizedText 
+    || (failReason ? `（未辨識到文字）原因: ${failReason}` : '（未辨識到文字,將以動物匿名顯示）');
   document.getElementById('recHint').textContent = pendingRecognizedText ? '✅ 辨識完成!確認送出吧' : '⚠️ 未辨識到文字,將以動物匿名顯示';
   vstop.textContent = '確認,送出投稿'; vstop.onclick = submitVoiceLetter;
 }
@@ -886,30 +891,89 @@ async function recognizeWithWhisper(blob) {
   }
 }
 
-// 【智能降級】自動嘗試所有方案
+// 【新增】Float32 PCM → WAV(16-bit) base64（Gemini 官方支援 audio/wav，webm 不支援）
+function pcm16kToWavBase64(float32, sampleRate = 16000) {
+  const len = float32.length;
+  const buffer = new ArrayBuffer(44 + len * 2);
+  const view = new DataView(buffer);
+  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  writeStr(0, 'RIFF'); view.setUint32(4, 36 + len * 2, true); writeStr(8, 'WAVE');
+  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  writeStr(36, 'data'); view.setUint32(40, len * 2, true);
+  let off = 44;
+  for (let i = 0; i < len; i++, off += 2) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  const bytes = new Uint8Array(buffer);
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+// 【新增】過濾 Whisper 幻覺亂字（如「好,好,好,好...」重複輸出）
+function filterHallucination(text) {
+  if (!text) return '';
+  const clean = text.replace(/[\s,，。.、!！?？]/g, '');
+  if (clean.length >= 4) {
+    const uniqueChars = new Set(clean.split(''));
+    // 整句幾乎只由 1-2 個字重複組成 → 視為亂字
+    if (uniqueChars.size <= 2 && clean.length >= 6) return '';
+    // 單一字符占比超過 80% → 視為亂字
+    const counts = {};
+    for (const c of clean) counts[c] = (counts[c] || 0) + 1;
+    const maxRatio = Math.max(...Object.values(counts)) / clean.length;
+    if (maxRatio > 0.8 && clean.length >= 6) return '';
+  }
+  return text;
+}
+
+// 【智能降級】自動嘗試所有方案（統一轉 16kHz WAV，格式全平台相容）
 async function recognizeWithFallback(audioBase64, blob) {
   console.log('開始辨識...優先順序: Gemini (3 key) → Whisper');
+  const errors = [];
+  let pcm = null;
 
-  // 【第 1 層】Gemini（3 個 key，使用實際錄音格式）
+  // 先統一轉成 16kHz 正規化 PCM（Gemini 與 Whisper 共用）
   try {
-    console.log('嘗試 Gemini API...');
-    const mimeType = (blob.type || 'audio/webm').split(';')[0];  // 去掉 codecs 參數
-    const text = await recognizeWithGemini(audioBase64, mimeType);
-    return { text, source: 'Gemini', success: true };
+    pcm = await blobToPcm16kWithNormalization(blob);
+  } catch (e) {
+    return { text: '', source: 'None', success: false, error: '音訊解碼失敗: ' + e.message };
+  }
+
+  // 【第 1 層】Gemini：轉 WAV 再送（webm/mp4 非 Gemini 支援格式，是先前亂辨識主因）
+  try {
+    console.log('嘗試 Gemini API (WAV 格式)...');
+    const wavBase64 = 'data:audio/wav;base64,' + pcm16kToWavBase64(pcm);
+    const text = filterHallucination(await recognizeWithGemini(wavBase64, 'audio/wav'));
+    if (text) return { text, source: 'Gemini', success: true };
+    errors.push('Gemini: 回傳空白（可能無語音內容）');
   } catch (geminiErr) {
     console.warn('Gemini 全部失敗:', geminiErr.message);
+    errors.push('Gemini: ' + geminiErr.message);
     API_CONFIG.stats.failedAttempts++;
   }
 
-  // 【第 2 層】本機 Whisper（完全離線）
+  // 【第 2 層】本機 Whisper（完全離線，直接重用 pcm）
   try {
     console.log('嘗試本機 Whisper...');
-    const text = await recognizeWithWhisper(blob);
-    return { text, source: 'Whisper', success: true };
+    const transcriber = await getAsrPipeline();
+    const result = await transcriber(pcm, { language: 'chinese', task: 'transcribe' });
+    API_CONFIG.stats.whisper++;
+    const text = filterHallucination((result?.text || '').trim());
+    if (text) return { text, source: 'Whisper', success: true };
+    errors.push('Whisper: 未辨識到有效文字');
   } catch (whisperErr) {
-    console.error('所有方案都失敗:', whisperErr.message);
-    return { text: '', source: 'None', success: false, error: whisperErr.message };
+    console.error('Whisper 失敗:', whisperErr.message);
+    errors.push('Whisper: ' + whisperErr.message);
   }
+
+  return { text: '', source: 'None', success: false, error: errors.join(' | ') };
 }
 
 // 【監控面板】查看 API 使用統計
