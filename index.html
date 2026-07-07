@@ -761,10 +761,17 @@ function dynamicRangeCompression(samples, threshold = 0.5, ratio = 4) {
     output[i] = samples[i] * gain;
   }
   
-  const max = Math.max(...Array.from(output).map(Math.abs));
-  if (max > 1) {
+  // 【修正】用迴圈求峰值（Math.max(...大陣列) 會爆棧 Maximum call stack size exceeded）
+  let max = 0;
+  for (let i = 0; i < output.length; i++) {
+    const abs = Math.abs(output[i]);
+    if (abs > max) max = abs;
+  }
+  // 峰值正規化到 0.95（同時解決音量過小與削波）
+  if (max > 0.0001) {
+    const norm = 0.95 / max;
     for (let i = 0; i < output.length; i++) {
-      output[i] /= max;
+      output[i] *= norm;
     }
   }
   
