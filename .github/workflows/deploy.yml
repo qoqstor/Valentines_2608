@@ -3,17 +3,17 @@ name: Deploy with API Keys
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch:    # 允許在 Actions 頁面手動觸發,不用推代碼
+  workflow_dispatch:
 
 permissions:
-  contents: write       # 關鍵!新倉庫預設唯讀,沒這行部署會 403 失敗
+  contents: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Inject API Keys
       run: |
@@ -29,9 +29,6 @@ jobs:
         echo "金鑰注入完成"
 
     - name: Deploy to GitHub Pages
-      uses: peaceiris/actions-gh-pages@v3
+      uses: peaceiris/actions-gh-pages@v4
       with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./
-
-
+        github_token: ${
