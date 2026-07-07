@@ -604,8 +604,10 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
     currentStream = await navigator.mediaDevices.getUserMedia({
       audio: { 
         autoGainControl: true, 
-        noiseSuppression: false, // 有時手機抗噪太強會讓聲音斷續，建議關閉或由系統預設
-        echoCancellation: true
+        noiseSuppression: true,
+        echoCancellation: true,
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 48000 }
       }
     });
   } catch (e) { showToast('無法取得麥克風權限'); return; }
@@ -635,8 +637,8 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
   mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
   mediaRecorder.onstop = onRecordingStop;
   
-  // 【關鍵改動】每 250ms 強制寫入一次資料，避免手機瀏覽器快取溢位造成斷續掉封包
-  mediaRecorder.start(250); 
+  // 每 100ms 寫入一次資料，減少手機緩衝溢位掉封包
+  mediaRecorder.start(100); 
   
   recordSeconds = 0;
   document.getElementById('recIndicator').classList.add('recording');
@@ -656,10 +658,22 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
 function stopRecording(cancelled) {
   clearInterval(recordTimer);
   document.getElementById('recIndicator').classList.remove('recording');
-  if (currentStream) currentStream.getTracks().forEach(t => t.stop());
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    if (cancelled) mediaRecorder.onstop = () => {};
-    mediaRecorder.stop();
+    if (cancelled) {
+      mediaRecorder.onstop = () => {};
+      try { mediaRecorder.stop(); } catch(e){}
+      if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+      return;
+    }
+    // 【修正】手機 stop 時最後一塊資料可能還沒送達，先強制 requestData 收尾
+    try { if (mediaRecorder.state === 'recording') mediaRecorder.requestData(); } catch(e){}
+    // 稍等讓最後的 dataavailable 觸發完再 stop，避免尾端音訊遺失
+    setTimeout(() => {
+      try { mediaRecorder.stop(); } catch(e){}
+      if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+    }, 250);
+  } else {
+    if (currentStream) currentStream.getTracks().forEach(t => t.stop());
   }
 }
 
@@ -987,7 +1001,7 @@ function filterHallucination(text) {
   return text;
 }
 
-// 【v7 新增】Whisper 迴圈幻覺去重：同一句重複多次 → 只留一次
+// 【v7 新增, v10 強化】Whisper 迴圈幻覺去重：同一句重複多次 → 只留一次
 function dedupeRepeats(text) {
   if (!text) return '';
   // 去掉包裹用的全形/半形括號
@@ -1003,14 +1017,25 @@ function dedupeRepeats(text) {
     out.push(s);
   }
   let result = out.join('').trim();
-  // 整串仍是同一短語重複拼接（無標點分隔）的情況：偵測週期性重複
+
   const compact = result.replace(/[。！？!?，,、\s]/g, '');
+  // (A) 整串為同一短語精確重複拼接
   for (let len = 2; len <= Math.floor(compact.length / 2); len++) {
     if (compact.length % len === 0) {
       const unit = compact.slice(0, len);
-      if (unit.repeat(compact.length / len) === compact && compact.length / len >= 3) {
-        return unit;  // 重複 3 次以上 → 只留一個單位
+      if (unit.repeat(compact.length / len) === compact && compact.length / len >= 2) {
+        return unit;
       }
+    }
+  }
+  // (B) 前綴重複偵測（容許尾端不完整）：找最短重複單元，出現 >=3 次即視為幻覺
+  for (let len = 2; len <= Math.floor(compact.length / 3); len++) {
+    const unit = compact.slice(0, len);
+    let count = 0, pos = 0;
+    while (compact.startsWith(unit, pos)) { count++; pos += len; }
+    // 整串幾乎都由這個單元重複組成（覆蓋 >85%）且重複 >=3 次
+    if (count >= 3 && pos / compact.length > 0.85) {
+      return unit;
     }
   }
   return result;
@@ -1112,7 +1137,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v9·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v10·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
