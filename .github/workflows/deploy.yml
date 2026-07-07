@@ -6,26 +6,38 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Inject API Keys
-      run: |
-        sed -i "s/__GEMINI_KEY_1__/${{ secrets.GEMINI_KEY_1 }}/g" index.html
-        sed -i "s/__GEMINI_KEY_2__/${{ secrets.GEMINI_KEY_2 }}/g" index.html
-        sed -i "s/__GEMINI_KEY_3__/${{ secrets.GEMINI_KEY_3 }}/g" index.html
+      - name: Inject API Keys
+        run: |
+          sed -i "s/__GEMINI_KEY_1__/${{ secrets.GEMINI_KEY_1 }}/g" index.html
+          sed -i "s/__GEMINI_KEY_2__/${{ secrets.GEMINI_KEY_2 }}/g" index.html
+          sed -i "s/__GEMINI_KEY_3__/${{ secrets.GEMINI_KEY_3 }}/g" index.html
 
-    - name: Verify injection
-      run: |
-        if grep -q "__GEMINI_KEY" index.html; then exit 1; fi
+      - name: Verify injection
+        run: |
+          if grep -q "__GEMINI_KEY" index.html; then exit 1; fi
 
-    - name: Deploy to GitHub Pages
-      uses: peaceiris/actions-gh-pages@v4
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
