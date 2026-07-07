@@ -612,6 +612,46 @@ function resetVoiceModal() {
 
 document.getElementById('voiceCancel').addEventListener('click', () => { stopRecording(true); document.getElementById('voiceModal').classList.remove('show'); });
 
+// 【v12】Web Audio 收音增強鏈：不再依賴手機自身增益（部分 Android 關 AEC 後硬體 AGC 也失效）
+let recAudioCtx = null, recAnalyser = null, recMeterRAF = null, recSilentMs = 0;
+
+function stopLevelMeter() {
+  if (recMeterRAF) { cancelAnimationFrame(recMeterRAF); recMeterRAF = null; }
+  recAnalyser = null;
+}
+function closeRecAudio() {
+  if (recAudioCtx) { try { recAudioCtx.close(); } catch(e){} recAudioCtx = null; }
+}
+
+// 即時音量條：錄音中直接看到麥克風收音狀況
+function startLevelMeter() {
+  if (!recAnalyser) return;
+  const buf = new Uint8Array(recAnalyser.fftSize);
+  let lastT = performance.now();
+  const tick = () => {
+    if (!recAnalyser) return;
+    recAnalyser.getByteTimeDomainData(buf);
+    let peak = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = Math.abs(buf[i] - 128) / 128;
+      if (v > peak) peak = v;
+    }
+    const now = performance.now();
+    const dt = now - lastT; lastT = now;
+    if (peak < 0.03) recSilentMs += dt; else recSilentMs = 0;
+    const bars = '▁▂▃▄▅▆▇█';
+    const level = bars.slice(0, Math.max(1, Math.min(8, Math.ceil(peak * 12))));
+    const hint = document.getElementById('recHint');
+    if (hint) {
+      hint.textContent = recSilentMs > 1500
+        ? '⚠️ 幾乎收不到聲音!請靠近麥克風大聲說'
+        : `錄音中... 音量 ${level}`;
+    }
+    recMeterRAF = requestAnimationFrame(tick);
+  };
+  recMeterRAF = requestAnimationFrame(tick);
+}
+
 document.getElementById('voiceStart').addEventListener('click', async () => {
   if (!navigator.mediaDevices?.getUserMedia) { showToast('此環境不支援錄音'); return; }
   // 【v11】錄音前暫停背景音樂，避免回音消除把人聲攪爛
@@ -639,12 +679,38 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
     }
   }
 
+  // 【v12】建立收音增強鏈：麥克風 → 壓縮器(拉平動態) → 4 倍增益 → 錄音
+  // 錄進去的音檔本身就變大聲（連播放給別人聽的也一併修好）
+  let streamToRecord = currentStream;
+  recSilentMs = 0;
+  try {
+    const ACtx = window.AudioContext || window.webkitAudioContext;
+    recAudioCtx = new ACtx();
+    await recAudioCtx.resume();
+    const src = recAudioCtx.createMediaStreamSource(currentStream);
+    const comp = recAudioCtx.createDynamicsCompressor();
+    comp.threshold.value = -45; comp.knee.value = 20; comp.ratio.value = 8;
+    comp.attack.value = 0.003; comp.release.value = 0.25;
+    const gain = recAudioCtx.createGain();
+    gain.gain.value = 4.0;  // +12dB
+    recAnalyser = recAudioCtx.createAnalyser();
+    recAnalyser.fftSize = 512;
+    const dest = recAudioCtx.createMediaStreamDestination();
+    src.connect(comp); comp.connect(gain); gain.connect(dest); gain.connect(recAnalyser);
+    streamToRecord = dest.stream;
+  } catch (e) {
+    console.warn('收音增強鏈建立失敗,退回原始串流:', e);
+    stopLevelMeter();
+    streamToRecord = currentStream;
+  }
+
   try { 
-    mediaRecorder = new MediaRecorder(currentStream, options); 
+    mediaRecorder = new MediaRecorder(streamToRecord, options); 
   } catch (e) { 
     try {
-      mediaRecorder = new MediaRecorder(currentStream); // 萬用降級方案
+      mediaRecorder = new MediaRecorder(streamToRecord); // 萬用降級方案
     } catch(err) {
+      stopLevelMeter();
       showToast('此瀏覽器不支援錄音格式'); return; 
     }
   }
@@ -661,6 +727,7 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
   document.getElementById('recognizedPreview').textContent = '錄完後會一次辨識,請完整說完你的告白...';
   document.getElementById('voiceStart').style.display = 'none';
   document.getElementById('voiceStop').style.display = 'inline-block';
+  startLevelMeter();  // 【v12】啟動即時音量條
   
   recordTimer = setInterval(() => {
     recordSeconds++;
@@ -672,12 +739,14 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
 
 function stopRecording(cancelled) {
   clearInterval(recordTimer);
+  stopLevelMeter();  // 【v12】停止即時音量條
   document.getElementById('recIndicator').classList.remove('recording');
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     if (cancelled) {
       mediaRecorder.onstop = () => {};
       try { mediaRecorder.stop(); } catch(e){}
       if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+      closeRecAudio();
       resumeMusicAfterRecording();  // 【v11】取消也要恢復音樂
       return;
     }
@@ -687,9 +756,11 @@ function stopRecording(cancelled) {
     setTimeout(() => {
       try { mediaRecorder.stop(); } catch(e){}
       if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+      closeRecAudio();  // 【v12】recorder 停止後才關閉增強鏈
     }, 250);
   } else {
     if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+    closeRecAudio();
     resumeMusicAfterRecording();
   }
 }
@@ -1186,7 +1257,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v11·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v12·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
