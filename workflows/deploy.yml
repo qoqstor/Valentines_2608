@@ -1,0 +1,35 @@
+name: Deploy with API Keys
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Inject API Keys
+      run: |
+        sed -i "s/__GEMINI_KEY_1__/${{ secrets.GEMINI_KEY_1 }}/g" index.html
+        sed -i "s/__GEMINI_KEY_2__/${{ secrets.GEMINI_KEY_2 }}/g" index.html
+        sed -i "s/__GEMINI_KEY_3__/${{ secrets.GEMINI_KEY_3 }}/g" index.html
+        echo "✅ API Keys 已注入"
+    
+    - name: Verify injection
+      run: |
+        if grep -q "__GEMINI_KEY" index.html; then
+          echo "❌ 錯誤：仍有未替換的佔位符"
+          exit 1
+        else
+          echo "✅ 所有佔位符已替換"
+        fi
+    
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./
