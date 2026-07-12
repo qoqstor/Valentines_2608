@@ -1117,8 +1117,15 @@ function levelizePcm(pcm, sr = 16000) {
   const noise = Math.max(sorted[Math.floor(sorted.length * 0.15)] || 0, 1e-6);
   const speechRef = Math.max(sorted[Math.floor(sorted.length * 0.8)] || 0, noise * 2);
   const gate = Math.max(Math.sqrt(noise * speechRef), 0.003);
-  // 【v22】音質估計(SNR)供畫面警告
-  lastSnrDb = 20 * Math.log10(speechRef / noise);
+  // 【v24】SNR 改用分類後均值：P15/P80 在「密集說話+零AGC超小訊號」下會失準誤報
+  {
+    let sS = 0, sN = 0, nS = 0, nN = 0;
+    for (let w = 0; w < nWin; w++) {
+      if (env[w] > gate) { sS += env[w]; nS++; } else { sN += env[w]; nN++; }
+    }
+    const sm = nS ? sS / nS : noise, nm = nN ? sN / nN : noise;
+    lastSnrDb = 20 * Math.log10(Math.max(sm, 1e-6) / Math.max(nm, 1e-6));
+  }
   // 3) 語音窗增益 = 目標RMS 0.14 / 包絡（0.5x~12x）；靜音窗標記 NaN
   const TARGET = 0.14;
   const gains = new Float32Array(nWin);
@@ -1157,6 +1164,8 @@ function levelizePcm(pcm, sr = 16000) {
     const ab = Math.abs(out[i]); if (ab > peak) peak = ab;
   }
   if (peak > 0.97) { const k = 0.97 / peak; for (let i = 0; i < out.length; i++) out[i] *= k; }
+  // 【v24】零AGC原始訊號可能小到撞增益上限,調平後仍偏小 → 整體抬升到健康峰值
+  else if (peak > 0.001 && peak < 0.5) { const k = Math.min(4, 0.7 / peak); for (let i = 0; i < out.length; i++) out[i] *= k; }
   return out;
 }
 
@@ -1436,7 +1445,7 @@ async function recognizeWithFallback(audioBase64, blob) {
     console.log(`嘗試 Gemini API (WAV 格式, ${duration}s)...`);
     const wavBase64 = 'data:audio/wav;base64,' + pcm16kToWavBase64(pcm);
     const text = dedupeRepeats(filterHallucination(await recognizeWithGemini(wavBase64, 'audio/wav')));
-    if (text) return { text, source: 'Gemini', success: true, duration, lowVolume, poorQuality: lastSnrDb < 10, pcm };
+    if (text) return { text, source: 'Gemini', success: true, duration, lowVolume, poorQuality: lastSnrDb < 8, pcm };
     errors.push('Gemini: 回傳空白（可能無語音內容）');
   } catch (geminiErr) {
     console.warn('Gemini 全部失敗:', geminiErr.message);
@@ -1451,14 +1460,14 @@ async function recognizeWithFallback(audioBase64, blob) {
     API_CONFIG.stats.whisper++;
     const text = dedupeRepeats(filterHallucination(rawText));
     // 【改動】即使 Whisper 成功，也帶回 Gemini 失敗原因供畫面顯示
-    if (text) return { text, source: 'Whisper', success: true, duration, lowVolume, poorQuality: lastSnrDb < 10, geminiError: errors[0] || '', pcm };
+    if (text) return { text, source: 'Whisper', success: true, duration, lowVolume, poorQuality: lastSnrDb < 8, geminiError: errors[0] || '', pcm };
     errors.push('Whisper: 未辨識到有效文字');
   } catch (whisperErr) {
     console.error('Whisper 失敗:', whisperErr.message);
     errors.push('Whisper: ' + whisperErr.message);
   }
 
-  return { text: '', source: 'None', success: false, error: errors.join(' | ') + `（音訊 ${duration}s）`, poorQuality: lastSnrDb < 10, pcm };
+  return { text: '', source: 'None', success: false, error: errors.join(' | ') + `（音訊 ${duration}s）`, poorQuality: lastSnrDb < 8, pcm };
 }
 
 // 【監控面板】查看 API 使用統計
@@ -1511,7 +1520,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v23·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v24·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
