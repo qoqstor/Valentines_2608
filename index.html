@@ -1104,9 +1104,29 @@ function dynamicRangeCompression(samples, threshold = 0.5, ratio = 4) {
   return output;
 }
 
+// 【v26】高通濾波：切除 130Hz 以下的風扇/環境隆隆聲（頻譜驗屍:低頻比語音帶高 9dB=雜音元凶,
+// 時域噪音門切不到「說話期間」的低頻底噪）。RBJ biquad ×2 = 四階,語音帶零損傷。
+function highpassPcm(pcm, sr = 16000, fc = 130) {
+  const out = new Float32Array(pcm);
+  for (let pass = 0; pass < 2; pass++) {
+    const w0 = 2 * Math.PI * fc / sr, alpha = Math.sin(w0) / (2 * 0.7071), c = Math.cos(w0);
+    const a0 = 1 + alpha;
+    const b0 = (1 + c) / 2 / a0, b1 = -(1 + c) / a0, b2 = (1 + c) / 2 / a0;
+    const a1 = -2 * c / a0, a2 = (1 - alpha) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < out.length; i++) {
+      const x0 = out[i];
+      const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = x0; y2 = y1; y1 = y0; out[i] = y0;
+    }
+  }
+  return out;
+}
+
 // 【v20】離線自適應調平：逐窗把語音拉到目標音量，靜音窗凍結沿用鄰近增益。
 // 錄後處理有全局視野，無即時 AGC 回授問題；直接抹平筆電驅動 AGC 的「前 1 秒大聲、之後 -20dB」懸崖
 function levelizePcm(pcm, sr = 16000) {
+  pcm = highpassPcm(pcm, sr);  // 【v26】先切低頻隆隆聲,調平決策與成品同時受益
   const win = Math.round(sr * 0.05);           // 50ms 窗
   const nWin = Math.ceil(pcm.length / win);
   if (nWin < 4) return pcm;
@@ -1526,7 +1546,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v25·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v26·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
