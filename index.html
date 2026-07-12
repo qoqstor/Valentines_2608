@@ -553,6 +553,13 @@ document.getElementById('closeBtn').addEventListener('click',()=>{
   document.getElementById('letterPaper').classList.remove('show');
   document.getElementById('audioEl').pause();
 });
+// 【v25】播放別人的語音告白時自動暫停背景音樂,停止/播完自動恢復
+{
+  const _ael=document.getElementById('audioEl');
+  _ael.addEventListener('play', pauseMusicForRecording);
+  _ael.addEventListener('pause', resumeMusicAfterRecording);
+  _ael.addEventListener('ended', resumeMusicAfterRecording);
+}
 
 // ── 猜猜是誰(一人一票) ──
 async function setupGuessBox(letterId){
@@ -981,8 +988,7 @@ async function onRecordingStop() {
       }
       // 【v11】警告：音量過低 / 錄音被截斷（有效音訊遠短於錄音計時）
       if (result.lowVolume) sourceInfo += '｜⚠️音量偏低,建議靠近麥克風重錄';
-      // 【v22】收音品質過差（訊噪比<10dB）：多半是系統麥克風增強在搗亂
-      if (result.poorQuality) sourceInfo += '｜⚠️收音品質過差:請關閉Windows麥克風「增強功能/音效」後重試,或改用手機';
+      // 【v25】辨識成功即代表音質足夠,不再顯示品質警告(警告只留在失敗路徑,避免狼來了)
       if (recordSeconds >= 3 && parseFloat(result.duration) < recordSeconds * 0.6) {
         sourceInfo += `｜⚠️錄音疑似中斷(計時${recordSeconds}s但只收到${result.duration}s)`;
       }
@@ -1520,7 +1526,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v24·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v25·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
