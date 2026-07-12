@@ -197,6 +197,7 @@
       <div class="record-indicator" id="recIndicator">🎙️</div>
       <div class="record-time" id="recTime">00:00 / 最長 20 秒</div>
       <div class="recognized-preview" id="recognizedPreview">辨識文字會顯示在這裡...</div>
+      <textarea id="recognizedEdit" maxlength="300" rows="3" style="display:none;width:100%;margin-top:8px;padding:10px;border:1.5px solid #f3b8cd;border-radius:10px;font-size:14px;color:#5a4634;background:#fffdf8;resize:vertical;box-sizing:border-box;" placeholder="辨識失敗?可在此手動輸入你說的話(選填)"></textarea>
       <div class="record-hint" id="recHint">按下開始錄音,說出你的告白 (v6)</div>
     </div>
     <div class="modal-actions">
@@ -774,6 +775,7 @@ function resetVoiceModal() {
   document.getElementById('recIndicator').classList.remove('recording');
   document.getElementById('recTime').textContent = '00:00 / 最長 20 秒';
   document.getElementById('recognizedPreview').textContent = '辨識文字會顯示在這裡...';
+  const _re = document.getElementById('recognizedEdit'); _re.value = ''; _re.style.display = 'none';
   document.getElementById('recHint').textContent = '按下開始錄音,說出你的告白';
   document.getElementById('voiceStart').style.display = 'inline-block';
   const vstop = document.getElementById('voiceStop');
@@ -837,7 +839,7 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
         channelCount: { ideal: 1 }
       }
     });
-  } catch (e) { resumeMusicAfterRecording(); showToast('無法取得麥克風權限'); return; }
+  } catch (e) { resumeMusicAfterRecording(); showToast('無法取得麥克風權限'); logEvent('error', 'getUserMedia: ' + e.message); return; }
   
   audioChunks = [];
   
@@ -1015,12 +1017,22 @@ async function onRecordingStop() {
   }
 
   vstop.disabled = false;
-  // 【改動】失敗時在畫面顯示原因，手機不用開控制台也能除錯
-  document.getElementById('recognizedPreview').textContent = pendingRecognizedText 
-    || (failReason ? `（未辨識到文字）原因: ${failReason}` : '（未辨識到文字,將以動物匿名顯示）');
+  // 【v29】辨識結果放入可編輯欄位,使用者可修正錯字或手動補打
+  const editEl = document.getElementById('recognizedEdit');
+  editEl.value = pendingRecognizedText || '';
+  editEl.style.display = 'block';
+  document.getElementById('recognizedPreview').textContent = pendingRecognizedText
+    ? '👇 辨識結果如下,可直接點擊修改:'
+    : (failReason ? `（未辨識到文字）原因: ${failReason}｜可在下方手動輸入` : '（未辨識到文字,可在下方手動輸入,或直接送出以動物匿名顯示）');
   document.getElementById('recHint').textContent = pendingRecognizedText 
-    ? `✅ 辨識完成 (${sourceInfo})!確認送出吧` 
-    : '⚠️ 未辨識到文字,將以動物匿名顯示';
+    ? `✅ 辨識完成 (${sourceInfo})!確認或修改後送出` 
+    : '⚠️ 未辨識到文字,可手動輸入後送出';
+  // 【v29】錯誤自動回報(不含音訊與文字內容)
+  if (failReason) {
+    logEvent('error', 'recognition_failed: ' + failReason, { durationS: recordSeconds, snrDb: Math.round(lastSnrDb) });
+  } else if (sourceInfo.startsWith('Whisper')) {
+    logEvent('error', 'gemini_fallback: ' + sourceInfo.substring(0, 200), { durationS: recordSeconds, snrDb: Math.round(lastSnrDb) });
+  }
   vstop.textContent = '確認,送出投稿'; vstop.onclick = submitVoiceLetter;
 }
 
@@ -1030,6 +1042,8 @@ function blobToBase64(blob) {
 
 async function submitVoiceLetter() {
   if (!pendingAudioData) return;
+  // 【v29】以可編輯欄位的最終內容為準(使用者可能已修正辨識錯字或手動補打)
+  pendingRecognizedText = document.getElementById('recognizedEdit').value.trim();
   const recipient = document.getElementById('recipientInputVoice').value.trim() || null;
   // 【v14】隨機變聲（只變音調不變速）：抽半音數，播放時 PitchShift 套用
   const VOICE_PITCHES = [-4, -3, 3, 4, 5];
@@ -1349,10 +1363,20 @@ async function blobToPcm16kWithNormalization(blob) {
 
 // 【Gemini API 辨識】雙模型 × 3 Key 全備援（v5：最大化辨識力）
 // 順序：gemini-2.5-flash（音訊理解最強）→ gemini-2.0-flash，每個模型輪流 3 把 Key
+// 【v29】死模型記錄提升到模組層：整個工作階段有效,limit:0 的模型不再每次辨識重試
+const deadModels = new Set();
+// 【v29】把冗長錯誤壓縮成短語,彙整顯示所有模型的失敗原因(舊版只顯示最後一個)
+function compactGeminiError(msg) {
+  if (/limit: 0/.test(msg)) return '免費層無額度';
+  if (/quota|exceeded|RESOURCE_EXHAUSTED/i.test(msg)) return '配額用盡';
+  if (/未設置/.test(msg)) return 'Key未設置';
+  if (/回傳空白/.test(msg)) return '回傳空白';
+  if (/API key not valid|INVALID_ARGUMENT.*key/i.test(msg)) return 'Key無效';
+  return msg.substring(0, 40);
+}
 async function recognizeWithGemini(audioBase64, mimeType = 'audio/webm') {
-  // 【v18】2.0-flash 免費層已下架(limit:0)，改以 2.5 系列為主力；遇 limit:0 該模型標記死亡直接跳過
   const MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
-  const deadModels = new Set();
+  const modelErrs = {};  // 【v29】每個模型的第一個錯誤
   let lastError = null;
 
   for (const model of MODELS) {
@@ -1404,6 +1428,7 @@ async function recognizeWithGemini(audioBase64, mimeType = 'audio/webm') {
         if (!response.ok) {
           const msg = data.error?.message || `HTTP ${response.status}`;
           lastError = new Error(`[${model}] ` + msg);
+          if (!modelErrs[model]) modelErrs[model] = compactGeminiError(msg);
           console.warn(`❌ ${model} Key ${index + 1} 失敗: ${lastError.message}，嘗試下一個...`);
           // 【v18】limit: 0 = 該模型免費層已無額度（非用完，是下架），換 Key 也沒用 → 標記死亡跳下一模型
           if (msg.includes('limit: 0')) { deadModels.add(model); break; }
@@ -1418,6 +1443,7 @@ async function recognizeWithGemini(audioBase64, mimeType = 'audio/webm') {
         if (!text) {
           const fr = data.candidates?.[0]?.finishReason || '';
           lastError = new Error(`[${model}] 回傳空白${fr ? '(' + fr + ')' : ''}`);
+          if (!modelErrs[model]) modelErrs[model] = '回傳空白';
           console.warn(`⚠️ ${model} Key ${index + 1} 回傳空白，嘗試下一個...`);
           continue;
         }
@@ -1428,13 +1454,41 @@ async function recognizeWithGemini(audioBase64, mimeType = 'audio/webm') {
         return text;
       } catch (error) {
         lastError = error;
+        if (!modelErrs[model]) modelErrs[model] = compactGeminiError(error.message || '網路錯誤');
         console.warn(`❌ ${model} Key ${index + 1} 網路錯誤: ${error.message}，嘗試下一個...`);
       }
     }
   }
 
-  throw lastError || new Error('所有 Gemini 模型與 Key 都失敗');
+  // 【v29】彙整所有模型的失敗原因(舊版只顯示最後一個,誤導除錯方向)
+  const summary = Object.entries(modelErrs).map(([m, e]) => `${m.replace('gemini-', '')}:${e}`).join('; ');
+  throw new Error(summary || (lastError ? lastError.message : '所有 Gemini 模型與 Key 都失敗'));
 }
+
+// 【v29】錯誤自動回報:寫入 Firestore `logs` 集合(僅錯誤事件,每工作階段上限 5 筆,只含技術指標不含音訊/文字內容)
+const sessionLogs = [];
+let logsSent = 0;
+function logEvent(type, detail, extra) {
+  const entry = { ts: Date.now(), type, detail: String(detail || '').substring(0, 300), ...(extra || {}) };
+  sessionLogs.push(entry);
+  console.log('[log]', entry);
+  if (type === 'error' && logsSent < 5) {
+    logsSent++;
+    try {
+      addDoc(collection(db, 'logs'), {
+        ...entry,
+        version: 'v29',
+        ua: navigator.userAgent.substring(0, 120),
+        uid: MY_UID
+      }).catch(e => console.warn('log 上傳失敗', e));
+    } catch (e) { console.warn('log 上傳失敗', e); }
+  }
+}
+window.exportLogs = () => {  // 控制台輸入 exportLogs() 可下載本階段完整日誌
+  const blob = new Blob([JSON.stringify(sessionLogs, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'valentine-logs.json'; a.click();
+};
 
 // 【本機 Whisper】完全離線備選
 async function recognizeWithWhisper(blob) {
@@ -1651,7 +1705,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v28·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v29·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
