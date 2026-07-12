@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="470" viewBox="0 0 680 470" font-family="'Microsoft JhengHei','Noto Sans TC',sans-serif">
+  <!-- 背景 -->
+  <rect width="680" height="470" rx="12" fill="#17191e"/>
+  <!-- 標題列 -->
+  <rect x="0" y="0" width="680" height="46" rx="12" fill="#22252c"/>
+  <text x="24" y="30" fill="#e8e8e8" font-size="17" font-weight="bold">🔊 音效主控台（Realtek / ASUS）─ 麥克風</text>
+
+  <!-- 麥克風效果區 -->
+  <text x="24" y="82" fill="#cfcfcf" font-size="15" font-weight="bold">麥克風效果</text>
+
+  <!-- 灰掉的效果選項（不用理會） -->
+  <g opacity="0.45">
+    <text x="40" y="116" fill="#aaa" font-size="13">一般降噪：</text>
+    <circle cx="140" cy="112" r="7" fill="none" stroke="#888" stroke-width="1.5"/>
+    <text x="154" y="116" fill="#aaa" font-size="13">指向錄音模式</text>
+    <circle cx="290" cy="112" r="7" fill="#3f9eea"/>
+    <text x="304" y="116" fill="#aaa" font-size="13">360° 錄音模式</text>
+    <circle cx="450" cy="112" r="7" fill="none" stroke="#888" stroke-width="1.5"/>
+    <text x="464" y="116" fill="#aaa" font-size="13">立體聲強化模式</text>
+
+    <text x="40" y="150" fill="#aaa" font-size="13">會議 AI 降噪：</text>
+    <circle cx="160" cy="146" r="7" fill="none" stroke="#888" stroke-width="1.5"/>
+    <text x="174" y="150" fill="#aaa" font-size="13">單人會議模式</text>
+    <circle cx="310" cy="146" r="7" fill="none" stroke="#888" stroke-width="1.5"/>
+    <text x="324" y="150" fill="#aaa" font-size="13">多人會議模式</text>
+    <text x="560" y="150" fill="#777" font-size="12">（這些都不用動）</text>
+  </g>
+
+  <!-- 重點區：關閉麥克風音效 -->
+  <rect x="24" y="182" width="480" height="86" rx="10" fill="#20242c" stroke="#ff4d5e" stroke-width="3"/>
+  <text x="44" y="216" fill="#ffffff" font-size="16" font-weight="bold">關閉麥克風音效</text>
+  <!-- 開關（開啟狀態） -->
+  <rect x="44" y="228" width="56" height="26" rx="13" fill="#3f9eea"/>
+  <circle cx="86" cy="241" r="10" fill="#ffffff"/>
+  <text x="112" y="246" fill="#ffffff" font-size="15" font-weight="bold">原始音訊</text>
+  <text x="230" y="246" fill="#7fd47f" font-size="13">← 開關往右＝開啟 ✅</text>
+
+  <!-- 紅色箭頭與說明泡泡 -->
+  <g>
+    <path d="M 560 210 Q 530 225 512 236" fill="none" stroke="#ff4d5e" stroke-width="4" marker-end="url(#arrow)"/>
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff4d5e"/>
+      </marker>
+    </defs>
+    <rect x="524" y="176" width="136" height="56" rx="10" fill="#ff4d5e"/>
+    <text x="592" y="199" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">① 把這個開關</text>
+    <text x="592" y="219" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">切成「開啟」</text>
+  </g>
+
+  <!-- 預設格式（不用動） -->
+  <g opacity="0.45">
+    <text x="24" y="308" fill="#cfcfcf" font-size="14" font-weight="bold">預設格式</text>
+    <rect x="24" y="320" width="180" height="30" rx="6" fill="#2a2e37"/>
+    <text x="38" y="340" fill="#bbb" font-size="13">48000Hz 16Bits ▾</text>
+    <text x="220" y="340" fill="#777" font-size="12">（維持預設即可）</text>
+  </g>
+
+  <!-- 步驟提醒 -->
+  <rect x="24" y="376" width="632" height="70" rx="10" fill="#20242c"/>
+  <text x="44" y="404" fill="#ffd166" font-size="14" font-weight="bold">② 設定完成後：完全關閉瀏覽器（所有視窗）再重新開啟，讓麥克風重新初始化</text>
+  <text x="44" y="430" fill="#9ad0ff" font-size="13">③ 回到告白信牆錄一段測試，音量條有跳動、播放清楚 ＝ 設定成功 🎉</text>
+</svg>
