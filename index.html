@@ -1095,6 +1095,52 @@ function dynamicRangeCompression(samples, threshold = 0.5, ratio = 4) {
   return output;
 }
 
+// 【v20】離線自適應調平：逐窗把語音拉到目標音量，靜音窗凍結沿用鄰近增益。
+// 錄後處理有全局視野，無即時 AGC 回授問題；直接抹平筆電驅動 AGC 的「前 1 秒大聲、之後 -20dB」懸崖
+function levelizePcm(pcm, sr = 16000) {
+  const win = Math.round(sr * 0.05);           // 50ms 窗
+  const nWin = Math.ceil(pcm.length / win);
+  if (nWin < 4) return pcm;
+  // 1) 每窗 RMS 包絡
+  const env = new Float32Array(nWin);
+  for (let w = 0; w < nWin; w++) {
+    let sum = 0; const s = w * win, e = Math.min(pcm.length, s + win);
+    for (let i = s; i < e; i++) sum += pcm[i] * pcm[i];
+    env[w] = Math.sqrt(sum / Math.max(1, e - s));
+  }
+  // 2) 噪音底 = 包絡第 15 百分位；語音門檻 = max(噪音底×2.5, 0.004)
+  const sorted = Array.from(env).sort((a, b) => a - b);
+  const noise = sorted[Math.floor(sorted.length * 0.15)] || 0;
+  const gate = Math.max(noise * 2.5, 0.004);
+  // 3) 語音窗增益 = 目標RMS 0.14 / 包絡（0.5x~12x）；靜音窗標記 NaN
+  const TARGET = 0.14;
+  const gains = new Float32Array(nWin);
+  for (let w = 0; w < nWin; w++) {
+    gains[w] = env[w] > gate ? Math.min(12, Math.max(0.5, TARGET / env[w])) : NaN;
+  }
+  // 4) 靜音窗補值：沿用前一個有效增益（開頭沒有則用後方第一個，再沒有則 1）
+  let last = NaN;
+  for (let w = 0; w < nWin; w++) { if (!isNaN(gains[w])) last = gains[w]; else if (!isNaN(last)) gains[w] = last; }
+  last = NaN;
+  for (let w = nWin - 1; w >= 0; w--) { if (!isNaN(gains[w])) last = gains[w]; else gains[w] = isNaN(last) ? 1 : last; }
+  // 5) 增益前後雙向平滑（約 200ms 時間常數），避免窗間跳變
+  const a = Math.exp(-0.05 / 0.2);
+  for (let w = 1; w < nWin; w++) gains[w] = a * gains[w - 1] + (1 - a) * gains[w];
+  for (let w = nWin - 2; w >= 0; w--) gains[w] = a * gains[w + 1] + (1 - a) * gains[w];
+  // 6) 套用（窗間線性內插）+ 峰值保護
+  const out = new Float32Array(pcm.length);
+  let peak = 0;
+  for (let i = 0; i < pcm.length; i++) {
+    const fw = i / win; const w0 = Math.min(nWin - 1, Math.floor(fw));
+    const w1 = Math.min(nWin - 1, w0 + 1); const t = fw - w0;
+    const g = gains[w0] * (1 - t) + gains[w1] * t;
+    out[i] = pcm[i] * g;
+    const ab = Math.abs(out[i]); if (ab > peak) peak = ab;
+  }
+  if (peak > 0.97) { const k = 0.97 / peak; for (let i = 0; i < out.length; i++) out[i] *= k; }
+  return out;
+}
+
 // 【PCM 轉換】帶音量正規化
 let lastRawPeak = 0;  // 【v11】正規化前的原始峰值，供低音量判斷
 async function blobToPcm16kWithNormalization(blob) {
@@ -1137,7 +1183,8 @@ async function blobToPcm16kWithNormalization(blob) {
   bufferSource.start();
   
   const renderedBuffer = await offlineCtx.startRendering();
-  return renderedBuffer.getChannelData(0);
+  // 【v20】離線自適應調平：抹平驅動懸崖、統一語音音量
+  return levelizePcm(renderedBuffer.getChannelData(0));
 }
 
 // 【Gemini API 辨識】雙模型 × 3 Key 全備援（v5：最大化辨識力）
@@ -1442,7 +1489,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v19·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v20·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
