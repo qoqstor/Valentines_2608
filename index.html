@@ -981,6 +981,8 @@ async function onRecordingStop() {
       }
       // 【v11】警告：音量過低 / 錄音被截斷（有效音訊遠短於錄音計時）
       if (result.lowVolume) sourceInfo += '｜⚠️音量偏低,建議靠近麥克風重錄';
+      // 【v22】收音品質過差（訊噪比<10dB）：多半是系統麥克風增強在搗亂
+      if (result.poorQuality) sourceInfo += '｜⚠️收音品質過差:請關閉Windows麥克風「增強功能/音效」後重試,或改用手機';
       if (recordSeconds >= 3 && parseFloat(result.duration) < recordSeconds * 0.6) {
         sourceInfo += `｜⚠️錄音疑似中斷(計時${recordSeconds}s但只收到${result.duration}s)`;
       }
@@ -988,6 +990,7 @@ async function onRecordingStop() {
     } else {
       pendingRecognizedText = '';
       failReason = result.error || '';
+      if (result.poorQuality) failReason = '收音品質過差(請關閉Windows麥克風「增強功能」後重試,或改用手機)｜' + failReason;
       console.warn('⚠️ 辨識失敗:', result.error);
     }
 
@@ -1112,6 +1115,12 @@ function levelizePcm(pcm, sr = 16000) {
   const sorted = Array.from(env).sort((a, b) => a - b);
   const noise = sorted[Math.floor(sorted.length * 0.15)] || 0;
   const gate = Math.max(noise * 2.5, 0.004);
+  // 【v22】音質估計：語音窗平均包絡 vs 噪音底 → SNR，供畫面警告
+  {
+    let sSum = 0, sN = 0;
+    for (let w = 0; w < nWin; w++) if (env[w] > gate) { sSum += env[w]; sN++; }
+    lastSnrDb = sN ? 20 * Math.log10((sSum / sN) / Math.max(noise, 1e-6)) : 0;
+  }
   // 3) 語音窗增益 = 目標RMS 0.14 / 包絡（0.5x~12x）；靜音窗標記 NaN
   const TARGET = 0.14;
   const gains = new Float32Array(nWin);
@@ -1155,6 +1164,7 @@ function levelizePcm(pcm, sr = 16000) {
 
 // 【PCM 轉換】帶音量正規化
 let lastRawPeak = 0;  // 【v11】正規化前的原始峰值，供低音量判斷
+let lastSnrDb = 99;   // 【v22】調平時估計的訊噪比(dB)，過低=收音品質差
 async function blobToPcm16kWithNormalization(blob) {
   const arrayBuffer = await blob.arrayBuffer();
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -1350,8 +1360,10 @@ function filterHallucination(text) {
 // 【v7 新增, v10 強化】Whisper 迴圈幻覺去重：同一句重複多次 → 只留一次
 function dedupeRepeats(text) {
   if (!text) return '';
+  // 【v22】剝除時間戳亂碼：模型對噪音音訊會幻覺出字幕框架(00:0100:02...)
+  let t = text.replace(/\d{1,2}:\d{2}(?::\d{2})?/g, ' ');
   // 去掉包裹用的全形/半形括號
-  let t = text.replace(/[()（）\[\]【】]/g, ' ').replace(/\s+/g, ' ').trim();
+  t = t.replace(/[()（）\[\]【】]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!t) return '';
   // 依標點切段，去除「連續重複」的段落
   const segs = t.split(/(?<=[。！？!?，,、\s])/).map(s => s.trim()).filter(Boolean);
@@ -1426,7 +1438,7 @@ async function recognizeWithFallback(audioBase64, blob) {
     console.log(`嘗試 Gemini API (WAV 格式, ${duration}s)...`);
     const wavBase64 = 'data:audio/wav;base64,' + pcm16kToWavBase64(pcm);
     const text = dedupeRepeats(filterHallucination(await recognizeWithGemini(wavBase64, 'audio/wav')));
-    if (text) return { text, source: 'Gemini', success: true, duration, lowVolume, pcm };
+    if (text) return { text, source: 'Gemini', success: true, duration, lowVolume, poorQuality: lastSnrDb < 10, pcm };
     errors.push('Gemini: 回傳空白（可能無語音內容）');
   } catch (geminiErr) {
     console.warn('Gemini 全部失敗:', geminiErr.message);
@@ -1441,14 +1453,14 @@ async function recognizeWithFallback(audioBase64, blob) {
     API_CONFIG.stats.whisper++;
     const text = dedupeRepeats(filterHallucination(rawText));
     // 【改動】即使 Whisper 成功，也帶回 Gemini 失敗原因供畫面顯示
-    if (text) return { text, source: 'Whisper', success: true, duration, lowVolume, geminiError: errors[0] || '', pcm };
+    if (text) return { text, source: 'Whisper', success: true, duration, lowVolume, poorQuality: lastSnrDb < 10, geminiError: errors[0] || '', pcm };
     errors.push('Whisper: 未辨識到有效文字');
   } catch (whisperErr) {
     console.error('Whisper 失敗:', whisperErr.message);
     errors.push('Whisper: ' + whisperErr.message);
   }
 
-  return { text: '', source: 'None', success: false, error: errors.join(' | ') + `（音訊 ${duration}s）`, pcm };
+  return { text: '', source: 'None', success: false, error: errors.join(' | ') + `（音訊 ${duration}s）`, poorQuality: lastSnrDb < 10, pcm };
 }
 
 // 【監控面板】查看 API 使用統計
@@ -1501,7 +1513,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v21·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v22·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
