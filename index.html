@@ -1115,18 +1115,30 @@ function levelizePcm(pcm, sr = 16000) {
   // 3) 語音窗增益 = 目標RMS 0.14 / 包絡（0.5x~12x）；靜音窗標記 NaN
   const TARGET = 0.14;
   const gains = new Float32Array(nWin);
+  const isSpeech = new Uint8Array(nWin);
   for (let w = 0; w < nWin; w++) {
-    gains[w] = env[w] > gate ? Math.min(12, Math.max(0.5, TARGET / env[w])) : NaN;
+    isSpeech[w] = env[w] > gate ? 1 : 0;
+    gains[w] = isSpeech[w] ? Math.min(12, Math.max(0.5, TARGET / env[w])) : NaN;
   }
-  // 4) 靜音窗補值：沿用前一個有效增益（開頭沒有則用後方第一個，再沒有則 1）
+  // 4) 靜音窗補值：沿用鄰近有效增益
   let last = NaN;
   for (let w = 0; w < nWin; w++) { if (!isNaN(gains[w])) last = gains[w]; else if (!isNaN(last)) gains[w] = last; }
   last = NaN;
   for (let w = nWin - 1; w >= 0; w--) { if (!isNaN(gains[w])) last = gains[w]; else gains[w] = isNaN(last) ? 1 : last; }
-  // 5) 增益前後雙向平滑（約 200ms 時間常數），避免窗間跳變
-  const a = Math.exp(-0.05 / 0.2);
-  for (let w = 1; w < nWin; w++) gains[w] = a * gains[w - 1] + (1 - a) * gains[w];
-  for (let w = nWin - 2; w >= 0; w--) gains[w] = a * gains[w + 1] + (1 - a) * gains[w];
+  // 【v21】離線噪音門：非語音窗衰減至鄰近增益×0.1（-20dB）。
+  // v20 讓字間噪音沿用語音的大增益 → 訊噪差只剩 8dB＝「斷斷續續噪音」元凶
+  for (let w = 0; w < nWin; w++) if (!isSpeech[w]) gains[w] *= 0.1;
+  // 5)【v21】非對稱雙向平滑：進噪音快降(60ms)、回語音慢升(250ms)；
+  //    反向那一遍會在字頭前預先抬升增益，字頭不會被吃掉
+  const aF = Math.exp(-0.05 / 0.06), aS = Math.exp(-0.05 / 0.25);
+  for (let w = 1; w < nWin; w++) {
+    const al = gains[w] < gains[w - 1] ? aF : aS;
+    gains[w] = al * gains[w - 1] + (1 - al) * gains[w];
+  }
+  for (let w = nWin - 2; w >= 0; w--) {
+    const al = gains[w] < gains[w + 1] ? aF : aS;
+    gains[w] = al * gains[w + 1] + (1 - al) * gains[w];
+  }
   // 6) 套用（窗間線性內插）+ 峰值保護
   const out = new Float32Array(pcm.length);
   let peak = 0;
@@ -1489,7 +1501,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v20·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v21·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
