@@ -824,7 +824,7 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
   try {
     currentStream = await navigator.mediaDevices.getUserMedia({
       audio: { 
-        autoGainControl: true,       // 【v19】交回瀏覽器：自製 AGC 已整條移除,音量統一在錄後處理
+        autoGainControl: false,      // 【v23】關閉:Chrome AGC 開頭過衝後猛壓輸入(頭大聲尾小聲元凶)。錄音端零自動增益,音量全交離線調平
         noiseSuppression: false,     // 【v11】關閉：NS 會把較小的人聲當噪音吃掉
         echoCancellation: false,     // 【v11】關閉：音樂已暫停，無回音源；AEC 是錄音只剩雜音的元凶
         channelCount: { ideal: 1 }
@@ -1111,23 +1111,21 @@ function levelizePcm(pcm, sr = 16000) {
     for (let i = s; i < e; i++) sum += pcm[i] * pcm[i];
     env[w] = Math.sqrt(sum / Math.max(1, e - s));
   }
-  // 2) 噪音底 = 包絡第 15 百分位；語音門檻 = max(噪音底×2.5, 0.004)
+  // 【v23】雙百分位自適應門檻：噪音底=P15、語音參考=P80，門檻取幾何平均。
+  // 舊版固定 噪音底×2.5 在「整段都很小聲」時會把語音誤判為噪音(門檻吃掉語音=尾段被壓死)
   const sorted = Array.from(env).sort((a, b) => a - b);
-  const noise = sorted[Math.floor(sorted.length * 0.15)] || 0;
-  const gate = Math.max(noise * 2.5, 0.004);
-  // 【v22】音質估計：語音窗平均包絡 vs 噪音底 → SNR，供畫面警告
-  {
-    let sSum = 0, sN = 0;
-    for (let w = 0; w < nWin; w++) if (env[w] > gate) { sSum += env[w]; sN++; }
-    lastSnrDb = sN ? 20 * Math.log10((sSum / sN) / Math.max(noise, 1e-6)) : 0;
-  }
+  const noise = Math.max(sorted[Math.floor(sorted.length * 0.15)] || 0, 1e-6);
+  const speechRef = Math.max(sorted[Math.floor(sorted.length * 0.8)] || 0, noise * 2);
+  const gate = Math.max(Math.sqrt(noise * speechRef), 0.003);
+  // 【v22】音質估計(SNR)供畫面警告
+  lastSnrDb = 20 * Math.log10(speechRef / noise);
   // 3) 語音窗增益 = 目標RMS 0.14 / 包絡（0.5x~12x）；靜音窗標記 NaN
   const TARGET = 0.14;
   const gains = new Float32Array(nWin);
   const isSpeech = new Uint8Array(nWin);
   for (let w = 0; w < nWin; w++) {
     isSpeech[w] = env[w] > gate ? 1 : 0;
-    gains[w] = isSpeech[w] ? Math.min(12, Math.max(0.5, TARGET / env[w])) : NaN;
+    gains[w] = isSpeech[w] ? Math.min(24, Math.max(0.25, TARGET / env[w])) : NaN;  // 【v23】0.25x~24x:壓得住過衝頭、拉得起超小聲
   }
   // 4) 靜音窗補值：沿用鄰近有效增益
   let last = NaN;
@@ -1513,7 +1511,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v22·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v23·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
