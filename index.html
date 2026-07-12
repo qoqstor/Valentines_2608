@@ -777,7 +777,7 @@ function resetVoiceModal() {
 document.getElementById('voiceCancel').addEventListener('click', () => { stopRecording(true); document.getElementById('voiceModal').classList.remove('show'); });
 
 // 【v12】Web Audio 收音增強鏈：不再依賴手機自身增益（部分 Android 關 AEC 後硬體 AGC 也失效）
-let recAudioCtx = null, recAnalyser = null, recMeterRAF = null, recSilentMs = 0, recGainNode = null, recEnvelope = 0;
+let recAudioCtx = null, recAnalyser = null, recMeterRAF = null, recSilentMs = 0, recGainNode = null, recEnvelope = 0, recNoise = 0.002;
 
 function stopLevelMeter() {
   if (recMeterRAF) { cancelAnimationFrame(recMeterRAF); recMeterRAF = null; }
@@ -804,20 +804,19 @@ function startLevelMeter() {
     const now = performance.now();
     const dt = (now - lastT) / 1000; lastT = now;
     if (peak < 0.03) recSilentMs += dt * 1000; else recSilentMs = 0;
-    // 【v17】AGC 重寫：時間基準 + 語音包絡追蹤，杜絕「停頓時增益飆升」的回授失控
-    // 舊版每幀×1.05 = 每秒×18倍，講話間隙增益衝頂→下一個字爆掉（一開始正常後面壞掉的元凶）
+    // 【v18】AGC v3：噪音底追蹤。v17 固定門檻 0.08 會把「變小聲的語音」誤判靜音而凍結（後面沒聲音元凶）
     if (recGainNode) {
-      // 語音包絡：近期峰值，約 1.2 秒半衰
       recEnvelope = Math.max(peak, recEnvelope * Math.exp(-dt / 1.2));
+      // 噪音底：緩慢上浮、快速跟跌，語音門檻 = max(0.02, 噪音底×3)
+      recNoise = Math.min(recNoise * (1 + 0.4 * dt) + 0.0002 * dt, Math.max(peak, 0.002));
+      const speechGate = Math.max(0.02, recNoise * 3);
       const g = recGainNode.gain.value;
-      if (recEnvelope > 0.85) {
-        // 過燙：快速下降（約 -20dB/秒）
-        recGainNode.gain.value = Math.max(0.3, g * Math.exp(-2.5 * dt));
-      } else if (recEnvelope > 0.08 && recEnvelope < 0.4) {
-        // 確定有語音且偏小：緩升（約 +3dB/秒）
-        recGainNode.gain.value = Math.min(8.0, g * Math.exp(0.35 * dt));
+      if (recEnvelope > 0.8) {
+        recGainNode.gain.value = Math.max(0.3, g * Math.exp(-1.4 * dt));   // 過燙緩降 -12dB/s
+      } else if (recEnvelope > speechGate && recEnvelope < 0.45) {
+        recGainNode.gain.value = Math.min(8.0, g * Math.exp(0.46 * dt));   // 有語音且偏小 → +4dB/s
       }
-      // 停頓/靜音（包絡 ≤0.08）：凍結增益，底噪不會把增益推上去
+      // 低於語音門檻（真靜音）→ 凍結
     }
     const bars = '▁▂▃▄▅▆▇█';
     const level = bars.slice(0, Math.max(1, Math.min(8, Math.ceil(peak * 12))));
@@ -863,7 +862,7 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
   // 拆掉前級壓縮器：Chrome 的 DynamicsCompressor 內建自動補償增益，threshold -45 等於 +30dB
   // 暴力正規化機，把底噪都推到滿格，是筆電爆音/泵動失真的真正元凶
   let streamToRecord = currentStream;
-  recSilentMs = 0; recEnvelope = 0;
+  recSilentMs = 0; recEnvelope = 0; recNoise = 0.002;
   try {
     const ACtx = window.AudioContext || window.webkitAudioContext;
     recAudioCtx = new ACtx();
@@ -1160,10 +1159,13 @@ async function blobToPcm16kWithNormalization(blob) {
 // 【Gemini API 辨識】雙模型 × 3 Key 全備援（v5：最大化辨識力）
 // 順序：gemini-2.5-flash（音訊理解最強）→ gemini-2.0-flash，每個模型輪流 3 把 Key
 async function recognizeWithGemini(audioBase64, mimeType = 'audio/webm') {
-  const MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+  // 【v18】2.0-flash 免費層已下架(limit:0)，改以 2.5 系列為主力；遇 limit:0 該模型標記死亡直接跳過
+  const MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+  const deadModels = new Set();
   let lastError = null;
 
   for (const model of MODELS) {
+    if (deadModels.has(model)) continue;  // 【v18】免費層無額度的模型直接跳過，不浪費嘗試
     for (let i = 0; i < API_CONFIG.gemini.length; i++) {
       const { key, index } = getNextGeminiKey();
 
@@ -1209,9 +1211,12 @@ async function recognizeWithGemini(audioBase64, mimeType = 'audio/webm') {
         const data = await response.json();
 
         if (!response.ok) {
-          lastError = new Error(`[${model}] ` + (data.error?.message || `HTTP ${response.status}`));
+          const msg = data.error?.message || `HTTP ${response.status}`;
+          lastError = new Error(`[${model}] ` + msg);
           console.warn(`❌ ${model} Key ${index + 1} 失敗: ${lastError.message}，嘗試下一個...`);
-          continue;  // 任何錯誤（配額/無效key/權限/模型不存在）都換下一個
+          // 【v18】limit: 0 = 該模型免費層已無額度（非用完，是下架），換 Key 也沒用 → 標記死亡跳下一模型
+          if (msg.includes('limit: 0')) { deadModels.add(model); break; }
+          continue;  // 其他錯誤（配額/無效key/權限）換下一個 Key
         }
 
         // 【v13】正確解析：可能有多個 parts（含思考 part），只取非思考的文字並串接
@@ -1453,7 +1458,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v17·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v18·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
