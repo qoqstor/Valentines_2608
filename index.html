@@ -772,7 +772,7 @@ function resetVoiceModal() {
 document.getElementById('voiceCancel').addEventListener('click', () => { stopRecording(true); document.getElementById('voiceModal').classList.remove('show'); });
 
 // 【v12】Web Audio 收音增強鏈：不再依賴手機自身增益（部分 Android 關 AEC 後硬體 AGC 也失效）
-let recAudioCtx = null, recAnalyser = null, recMeterRAF = null, recSilentMs = 0;
+let recAudioCtx = null, recAnalyser = null, recMeterRAF = null, recSilentMs = 0, recGainNode = null;
 
 function stopLevelMeter() {
   if (recMeterRAF) { cancelAnimationFrame(recMeterRAF); recMeterRAF = null; }
@@ -780,6 +780,7 @@ function stopLevelMeter() {
 }
 function closeRecAudio() {
   if (recAudioCtx) { try { recAudioCtx.close(); } catch(e){} recAudioCtx = null; }
+  recGainNode = null;
 }
 
 // 即時音量條：錄音中直接看到麥克風收音狀況
@@ -798,6 +799,15 @@ function startLevelMeter() {
     const now = performance.now();
     const dt = now - lastT; lastT = now;
     if (peak < 0.03) recSilentMs += dt; else recSilentMs = 0;
+    // 【v15】AGC 自動增益：快到頂立刻降(防削波)，太小聲緩升(救小聲麥克風)
+    if (recGainNode) {
+      const g = recGainNode.gain.value;
+      if (peak > 0.85) {
+        recGainNode.gain.value = Math.max(1.0, g * 0.75);   // 快降
+      } else if (peak > 0.02 && peak < 0.15) {
+        recGainNode.gain.value = Math.min(8.0, g * 1.05);   // 有聲但太小 → 緩升
+      }
+    }
     const bars = '▁▂▃▄▅▆▇█';
     const level = bars.slice(0, Math.max(1, Math.min(8, Math.ceil(peak * 12))));
     const hint = document.getElementById('recHint');
@@ -838,8 +848,8 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
     }
   }
 
-  // 【v12】建立收音增強鏈：麥克風 → 壓縮器(拉平動態) → 4 倍增益 → 錄音
-  // 錄進去的音檔本身就變大聲（連播放給別人聽的也一併修好）
+  // 【v15】收音增強鏈：麥克風 → 壓縮器 → 自動增益(AGC) → 限幅器 → 錄音
+  // 固定 4x 會把筆電等原本夠大聲的麥克風打爆(削波失真=聽起來斷斷續續)，改為自動調節
   let streamToRecord = currentStream;
   recSilentMs = 0;
   try {
@@ -850,12 +860,18 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
     const comp = recAudioCtx.createDynamicsCompressor();
     comp.threshold.value = -45; comp.knee.value = 20; comp.ratio.value = 8;
     comp.attack.value = 0.003; comp.release.value = 0.25;
-    const gain = recAudioCtx.createGain();
-    gain.gain.value = 4.0;  // +12dB
+    recGainNode = recAudioCtx.createGain();
+    recGainNode.gain.value = 1.5;  // 【v15】起始 1.5x，由 AGC 依實際音量在 1x~8x 間自動調節
+    // 【v15】限幅器：兜底防止瞬間爆音
+    const limiter = recAudioCtx.createDynamicsCompressor();
+    limiter.threshold.value = -6; limiter.knee.value = 0; limiter.ratio.value = 20;
+    limiter.attack.value = 0.001; limiter.release.value = 0.1;
     recAnalyser = recAudioCtx.createAnalyser();
     recAnalyser.fftSize = 512;
     const dest = recAudioCtx.createMediaStreamDestination();
-    src.connect(comp); comp.connect(gain); gain.connect(dest); gain.connect(recAnalyser);
+    src.connect(comp); comp.connect(recGainNode);
+    recGainNode.connect(recAnalyser);           // AGC 偵測點：增益後、限幅前
+    recGainNode.connect(limiter); limiter.connect(dest);
     streamToRecord = dest.stream;
   } catch (e) {
     console.warn('收音增強鏈建立失敗,退回原始串流:', e);
@@ -1428,7 +1444,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v14·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v15·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
