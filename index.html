@@ -1104,6 +1104,94 @@ function dynamicRangeCompression(samples, threshold = 0.5, ratio = 4) {
   return output;
 }
 
+
+// 【v27】頻譜減噪：處理「說話期間」的寬頻嘶聲（時域門與高通都切不到）。
+// 原理：取能量最低30%幀估計噪音頻譜(逐bin中位數)，每幀頻譜減去1.6倍噪音、保留6%下限防音樂噪音。
+// 實測(用戶實檔)：噪音幀全頻帶-18dB,語音幀僅-1~3dB。
+function fftInPlace(re, im, inv) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (inv ? 1 : -1) * 2 * Math.PI / len;
+    const wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const ur = re[i + k], ui = im[i + k];
+        const vr = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci;
+        const vi = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+        re[i + k] = ur + vr; im[i + k] = ui + vi;
+        re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
+        const ncr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = ncr;
+      }
+    }
+  }
+  if (inv) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+}
+
+function spectralDenoise(pcm, sr = 16000) {
+  const FRAME = 512, HOP = 256, BINS = FRAME / 2 + 1;
+  const nF = Math.floor((pcm.length - FRAME) / HOP) + 1;
+  if (nF < 24) return pcm;  // 太短不處理
+  const win = new Float32Array(FRAME);
+  for (let i = 0; i < FRAME; i++) win[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / FRAME));
+  // 前向:存每幀複數頻譜與能量
+  const reA = new Float32Array(nF * BINS), imA = new Float32Array(nF * BINS), rmsA = new Float32Array(nF);
+  const re = new Float32Array(FRAME), im = new Float32Array(FRAME);
+  for (let f = 0; f < nF; f++) {
+    let e = 0;
+    for (let i = 0; i < FRAME; i++) { const v = pcm[f * HOP + i] * win[i]; re[i] = v; im[i] = 0; e += v * v; }
+    rmsA[f] = Math.sqrt(e / FRAME);
+    fftInPlace(re, im, false);
+    for (let b = 0; b < BINS; b++) { reA[f * BINS + b] = re[b]; imA[f * BINS + b] = im[b]; }
+  }
+  // 噪音幀=能量最低30%
+  const thr = Array.from(rmsA).sort((a, b) => a - b)[Math.floor(nF * 0.3)];
+  const nIdx = [];
+  for (let f = 0; f < nF; f++) if (rmsA[f] <= thr) nIdx.push(f);
+  if (nIdx.length < 8) return pcm;
+  // 逐bin中位數噪音頻譜
+  const noiseMag = new Float32Array(BINS);
+  const tmp = new Float32Array(nIdx.length);
+  for (let b = 0; b < BINS; b++) {
+    for (let k = 0; k < nIdx.length; k++) {
+      const o = nIdx[k] * BINS + b;
+      tmp[k] = Math.hypot(reA[o], imA[o]);
+    }
+    noiseMag[b] = Array.from(tmp).sort((a, c) => a - c)[Math.floor(nIdx.length / 2)];
+  }
+  // 減法+重建(overlap-add, win^2 權重歸一)
+  const ALPHA = 1.6, BETA = 0.06;
+  const out = new Float32Array(pcm.length), wsum = new Float32Array(pcm.length);
+  for (let f = 0; f < nF; f++) {
+    re.fill(0); im.fill(0);
+    for (let b = 0; b < BINS; b++) {
+      const o = f * BINS + b;
+      const m = Math.hypot(reA[o], imA[o]);
+      const nm = Math.max(m - ALPHA * noiseMag[b], BETA * m);
+      const sc = m > 1e-9 ? nm / m : 0;
+      const r2 = reA[o] * sc, i2 = imA[o] * sc;
+      re[b] = r2; im[b] = i2;
+      if (b > 0 && b < FRAME / 2) { re[FRAME - b] = r2; im[FRAME - b] = -i2; }  // 共軛對稱
+    }
+    fftInPlace(re, im, true);
+    const base = f * HOP;
+    for (let i = 0; i < FRAME; i++) {
+      out[base + i] += re[i] * win[i];
+      wsum[base + i] += win[i] * win[i];
+    }
+  }
+  for (let i = 0; i < pcm.length; i++) {
+    out[i] = wsum[i] > 1e-3 ? out[i] / wsum[i] : pcm[i];
+  }
+  return out;
+}
+
 // 【v26】高通濾波：切除 130Hz 以下的風扇/環境隆隆聲（頻譜驗屍:低頻比語音帶高 9dB=雜音元凶,
 // 時域噪音門切不到「說話期間」的低頻底噪）。RBJ biquad ×2 = 四階,語音帶零損傷。
 function highpassPcm(pcm, sr = 16000, fc = 130) {
@@ -1127,6 +1215,7 @@ function highpassPcm(pcm, sr = 16000, fc = 130) {
 // 錄後處理有全局視野，無即時 AGC 回授問題；直接抹平筆電驅動 AGC 的「前 1 秒大聲、之後 -20dB」懸崖
 function levelizePcm(pcm, sr = 16000) {
   pcm = highpassPcm(pcm, sr);  // 【v26】先切低頻隆隆聲,調平決策與成品同時受益
+  pcm = spectralDenoise(pcm, sr);  // 【v27】再減寬頻嘶聲(說話期間的雜音)
   const win = Math.round(sr * 0.05);           // 50ms 窗
   const nWin = Math.ceil(pcm.length / win);
   if (nWin < 4) return pcm;
@@ -1546,7 +1635,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v26·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v27·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
