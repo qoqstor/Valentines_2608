@@ -1166,15 +1166,31 @@ function spectralDenoise(pcm, sr = 16000) {
     noiseMag[b] = Array.from(tmp).sort((a, c) => a - c)[Math.floor(nIdx.length / 2)];
   }
   // 減法+重建(overlap-add, win^2 權重歸一)
-  const ALPHA = 1.6, BETA = 0.06;
+  // 【v28】抑制音樂噪音(閃爍音瑕疵,實測CV 1.8→0.79)：
+  //   下限改綁噪音床(0.35×噪音頻譜=平穩殘留,而非綁自身6%=隨機倖存點閃爍)
+  //   + 增益逐bin時間平滑(0.9) + 頻域5-bin平滑
+  const ALPHA = 1.6, BED = 0.35, TSMOOTH = 0.9;
   const out = new Float32Array(pcm.length), wsum = new Float32Array(pcm.length);
+  const prevSc = new Float32Array(BINS), scArr = new Float32Array(BINS), scSm = new Float32Array(BINS);
   for (let f = 0; f < nF; f++) {
     re.fill(0); im.fill(0);
     for (let b = 0; b < BINS; b++) {
       const o = f * BINS + b;
       const m = Math.hypot(reA[o], imA[o]);
-      const nm = Math.max(m - ALPHA * noiseMag[b], BETA * m);
-      const sc = m > 1e-9 ? nm / m : 0;
+      const nm = Math.max(m - ALPHA * noiseMag[b], BED * noiseMag[b]);
+      scArr[b] = m > 1e-9 ? Math.min(nm / m, 1.0) : BED;
+    }
+    // 頻域加權 3-bin 平滑 [1,2,1]/4（實測 CV 同 5-bin 均勻核，但對窄頻語音成分更溫和）
+    for (let b = 0; b < BINS; b++) {
+      const l = b > 0 ? scArr[b - 1] : scArr[b];
+      const r = b < BINS - 1 ? scArr[b + 1] : scArr[b];
+      scSm[b] = (l + 2 * scArr[b] + r) / 4;
+    }
+    for (let b = 0; b < BINS; b++) {
+      // 時間平滑
+      const sc = f === 0 ? scSm[b] : TSMOOTH * prevSc[b] + (1 - TSMOOTH) * scSm[b];
+      prevSc[b] = sc;
+      const o = f * BINS + b;
       const r2 = reA[o] * sc, i2 = imA[o] * sc;
       re[b] = r2; im[b] = i2;
       if (b > 0 && b < FRAME / 2) { re[FRAME - b] = r2; im[FRAME - b] = -i2; }  // 共軛對稱
@@ -1635,7 +1651,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v27·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v28·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
