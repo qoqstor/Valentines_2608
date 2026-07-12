@@ -777,7 +777,7 @@ function resetVoiceModal() {
 document.getElementById('voiceCancel').addEventListener('click', () => { stopRecording(true); document.getElementById('voiceModal').classList.remove('show'); });
 
 // 【v12】Web Audio 收音增強鏈：不再依賴手機自身增益（部分 Android 關 AEC 後硬體 AGC 也失效）
-let recAudioCtx = null, recAnalyser = null, recMeterRAF = null, recSilentMs = 0, recGainNode = null, recEnvelope = 0, recNoise = 0.002;
+let recAudioCtx = null, recAnalyser = null, recMeterRAF = null, recSilentMs = 0;
 
 function stopLevelMeter() {
   if (recMeterRAF) { cancelAnimationFrame(recMeterRAF); recMeterRAF = null; }
@@ -785,7 +785,6 @@ function stopLevelMeter() {
 }
 function closeRecAudio() {
   if (recAudioCtx) { try { recAudioCtx.close(); } catch(e){} recAudioCtx = null; }
-  recGainNode = null;
 }
 
 // 即時音量條：錄音中直接看到麥克風收音狀況
@@ -804,20 +803,7 @@ function startLevelMeter() {
     const now = performance.now();
     const dt = (now - lastT) / 1000; lastT = now;
     if (peak < 0.03) recSilentMs += dt * 1000; else recSilentMs = 0;
-    // 【v18】AGC v3：噪音底追蹤。v17 固定門檻 0.08 會把「變小聲的語音」誤判靜音而凍結（後面沒聲音元凶）
-    if (recGainNode) {
-      recEnvelope = Math.max(peak, recEnvelope * Math.exp(-dt / 1.2));
-      // 噪音底：緩慢上浮、快速跟跌，語音門檻 = max(0.02, 噪音底×3)
-      recNoise = Math.min(recNoise * (1 + 0.4 * dt) + 0.0002 * dt, Math.max(peak, 0.002));
-      const speechGate = Math.max(0.02, recNoise * 3);
-      const g = recGainNode.gain.value;
-      if (recEnvelope > 0.8) {
-        recGainNode.gain.value = Math.max(0.3, g * Math.exp(-1.4 * dt));   // 過燙緩降 -12dB/s
-      } else if (recEnvelope > speechGate && recEnvelope < 0.45) {
-        recGainNode.gain.value = Math.min(8.0, g * Math.exp(0.46 * dt));   // 有語音且偏小 → +4dB/s
-      }
-      // 低於語音門檻（真靜音）→ 凍結
-    }
+    // 【v19】AGC 已整條移除（改錄後統一處理），此處只做顯示與靜音警告
     const bars = '▁▂▃▄▅▆▇█';
     const level = bars.slice(0, Math.max(1, Math.min(8, Math.ceil(peak * 12))));
     const hint = document.getElementById('recHint');
@@ -838,7 +824,7 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
   try {
     currentStream = await navigator.mediaDevices.getUserMedia({
       audio: { 
-        autoGainControl: false,      // 【v16】關閉：瀏覽器 AGC 會把筆電訊號推到滿格,改用自家雙向 AGC
+        autoGainControl: true,       // 【v19】交回瀏覽器：自製 AGC 已整條移除,音量統一在錄後處理
         noiseSuppression: false,     // 【v11】關閉：NS 會把較小的人聲當噪音吃掉
         echoCancellation: false,     // 【v11】關閉：音樂已暫停，無回音源；AEC 是錄音只剩雜音的元凶
         channelCount: { ideal: 1 }
@@ -858,33 +844,22 @@ document.getElementById('voiceStart').addEventListener('click', async () => {
     }
   }
 
-  // 【v16】收音鏈重構：麥克風 → 雙向AGC增益 → 溫和限幅器 → 錄音
-  // 拆掉前級壓縮器：Chrome 的 DynamicsCompressor 內建自動補償增益，threshold -45 等於 +30dB
-  // 暴力正規化機，把底噪都推到滿格，是筆電爆音/泵動失真的真正元凶
+  // 【v19】停止即時對抗：拆除自製 AGC/限幅器整條鏈（v12~v18 與筆電驅動自帶 AGC 互相打架，
+  // 造成 1 秒懸崖/爆音/風扇被拉大等問題）。錄「原始串流」，音量統一改在錄後處理（見 onRecordingStop）。
+  // 這裡只留 analyser 做即時音量條監測。
   let streamToRecord = currentStream;
-  recSilentMs = 0; recEnvelope = 0; recNoise = 0.002;
+  recSilentMs = 0;
   try {
     const ACtx = window.AudioContext || window.webkitAudioContext;
     recAudioCtx = new ACtx();
     await recAudioCtx.resume();
     const src = recAudioCtx.createMediaStreamSource(currentStream);
-    recGainNode = recAudioCtx.createGain();
-    recGainNode.gain.value = 1.0;  // 【v16】起始 1x，AGC 依實際音量在 0.35x~8x 雙向調節（筆電過燙會衰減）
-    // 溫和限幅器：只做突發保險，threshold -3 幾乎無自動補償增益
-    const limiter = recAudioCtx.createDynamicsCompressor();
-    limiter.threshold.value = -3; limiter.knee.value = 2; limiter.ratio.value = 12;
-    limiter.attack.value = 0.002; limiter.release.value = 0.15;
     recAnalyser = recAudioCtx.createAnalyser();
     recAnalyser.fftSize = 512;
-    const dest = recAudioCtx.createMediaStreamDestination();
-    src.connect(recGainNode);
-    recGainNode.connect(recAnalyser);           // AGC 偵測點：增益後、限幅前
-    recGainNode.connect(limiter); limiter.connect(dest);
-    streamToRecord = dest.stream;
+    src.connect(recAnalyser);  // 只監測,不改寫訊號
   } catch (e) {
-    console.warn('收音增強鏈建立失敗,退回原始串流:', e);
+    console.warn('音量監測建立失敗(不影響錄音):', e);
     stopLevelMeter();
-    streamToRecord = currentStream;
   }
 
   try { 
@@ -1014,6 +989,15 @@ async function onRecordingStop() {
       pendingRecognizedText = '';
       failReason = result.error || '';
       console.warn('⚠️ 辨識失敗:', result.error);
+    }
+
+    // 【v19】以「辨識用的正規化+裁靜音 PCM」重建儲存音檔：
+    // 播放音量跨裝置一致、驅動泵動被 DRC 撫平、開頭懸崖/尾端靜音已裁除
+    if (result.pcm && result.pcm.length > 4800) {  // 至少 0.3 秒才值得重建
+      try {
+        pendingAudioData = 'data:audio/wav;base64,' + pcm16kToWavBase64(result.pcm);
+        console.log('✅ 儲存音檔已重建為正規化 WAV');
+      } catch (e2) { console.warn('WAV 轉存失敗,保留原始錄音:', e2); }
     }
   } catch (e) {
     console.error('未預期的錯誤:', e);
@@ -1383,7 +1367,7 @@ async function recognizeWithFallback(audioBase64, blob) {
     console.log(`嘗試 Gemini API (WAV 格式, ${duration}s)...`);
     const wavBase64 = 'data:audio/wav;base64,' + pcm16kToWavBase64(pcm);
     const text = dedupeRepeats(filterHallucination(await recognizeWithGemini(wavBase64, 'audio/wav')));
-    if (text) return { text, source: 'Gemini', success: true, duration, lowVolume };
+    if (text) return { text, source: 'Gemini', success: true, duration, lowVolume, pcm };
     errors.push('Gemini: 回傳空白（可能無語音內容）');
   } catch (geminiErr) {
     console.warn('Gemini 全部失敗:', geminiErr.message);
@@ -1398,14 +1382,14 @@ async function recognizeWithFallback(audioBase64, blob) {
     API_CONFIG.stats.whisper++;
     const text = dedupeRepeats(filterHallucination(rawText));
     // 【改動】即使 Whisper 成功，也帶回 Gemini 失敗原因供畫面顯示
-    if (text) return { text, source: 'Whisper', success: true, duration, lowVolume, geminiError: errors[0] || '' };
+    if (text) return { text, source: 'Whisper', success: true, duration, lowVolume, geminiError: errors[0] || '', pcm };
     errors.push('Whisper: 未辨識到有效文字');
   } catch (whisperErr) {
     console.error('Whisper 失敗:', whisperErr.message);
     errors.push('Whisper: ' + whisperErr.message);
   }
 
-  return { text: '', source: 'None', success: false, error: errors.join(' | ') + `（音訊 ${duration}s）` };
+  return { text: '', source: 'None', success: false, error: errors.join(' | ') + `（音訊 ${duration}s）`, pcm };
 }
 
 // 【監控面板】查看 API 使用統計
@@ -1458,7 +1442,7 @@ window.addEventListener('load', () => {
   }
   // 【新增】在錄音視窗提示行顯示 Key 狀態，手機免開控制台
   const hint = document.getElementById('recHint');
-  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v18·金鑰${injected}/3)`;
+  if (hint) hint.textContent = `按下開始錄音,說出你的告白 (v19·金鑰${injected}/3)`;
 });
 
 console.log('✅ 語音辨識改進模塊已加載');
