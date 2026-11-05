@@ -1,20 +1,27 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // 信件：允許任何人讀取，但完全禁止任何形式的寫入
     match /letters/{id} {
       allow read: if true;
-      allow create: if
-        (request.resource.data.text == null || request.resource.data.text.size() < 2000) &&
-        (!('audioData' in request.resource.data) || request.resource.data.audioData == null || request.resource.data.audioData.size() < 900000);
+      allow write: if false; 
     }
+    
+    // 猜測、中介資料、用戶：允許讀取（前端還需顯示），但完全禁止寫入
     match /guesses/{id} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if false;
     }
+    
     match /meta/{id} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if false;
     }
+    
     match /users/{uid} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if false;
     }
   }
 }
